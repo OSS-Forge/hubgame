@@ -17,30 +17,8 @@ import (
 )
 
 func TestGatewayIntegrationAuthIfMatchAndWebsocket(t *testing.T) {
-	ctx := context.Background()
-	store, err := database.OpenSQLite(ctx, "file::memory:?cache=shared")
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	defer store.Close()
-	store.RegisterController(controller.SchemaController{})
-
-	const (
-		secret        = "test-secret"
-		issuer        = "test-issuer"
-		internalToken = "internal-token"
-		adminToken    = "admin-token"
-	)
-
-	auth := controller.NewAuthController(secret, issuer)
-	controllerSrv := httptest.NewServer(api.NewControllerService(auth, adminToken).Router())
-	defer controllerSrv.Close()
-
-	dbEngineSrv := httptest.NewServer(api.NewDBEngineServer(store, internalToken).Router())
-	defer dbEngineSrv.Close()
-
-	gatewaySrv := httptest.NewServer(api.NewGatewayServer(controllerSrv.URL, dbEngineSrv.URL, internalToken).Router())
-	defer gatewaySrv.Close()
+	controllerSrv, _, gatewaySrv, cleanup := setupIntegrationStack(t)
+	defer cleanup()
 
 	token := issueToken(t, controllerSrv.URL, adminToken, "u-1", "t-1", "developer")
 
@@ -108,6 +86,82 @@ func TestGatewayIntegrationAuthIfMatchAndWebsocket(t *testing.T) {
 		t.Fatalf("expected tenant t-1, got %q", ev.TenantID)
 	}
 }
+
+func TestGatewayIntegrationRBACAndUnauthorizedWebsocket(t *testing.T) {
+	controllerSrv, _, gatewaySrv, cleanup := setupIntegrationStack(t)
+	defer cleanup()
+
+	playerToken := issueToken(t, controllerSrv.URL, adminToken, "u-2", "t-1", "player")
+	devToken := issueToken(t, controllerSrv.URL, adminToken, "u-3", "t-1", "developer")
+
+	createResp := requestJSON(t, http.MethodPost, gatewaySrv.URL+"/v1/entities", devToken, map[string]any{
+		"id":   "room-1",
+		"kind": "room",
+		"data": map[string]any{"name": "Main Room"},
+	}, nil)
+	if createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 create for developer, got %d", createResp.StatusCode)
+	}
+	createResp.Body.Close()
+
+	deleteResp := requestJSON(t, http.MethodDelete, gatewaySrv.URL+"/v1/entities/room-1", playerToken, nil, nil)
+	if deleteResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 for player delete, got %d", deleteResp.StatusCode)
+	}
+	deleteResp.Body.Close()
+
+	wsURL := strings.Replace(gatewaySrv.URL, "http://", "ws://", 1) + "/v1/events/stream?topic=room.chat"
+
+	_, unauthorizedResp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err == nil {
+		t.Fatalf("expected websocket dial failure without auth")
+	}
+	if unauthorizedResp == nil {
+		t.Fatalf("expected HTTP response for unauthorized websocket handshake")
+	}
+	if unauthorizedResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 websocket handshake without auth, got %d", unauthorizedResp.StatusCode)
+	}
+
+	wsHeaders := http.Header{}
+	wsHeaders.Set("Authorization", "Bearer "+playerToken)
+	wsConn, _, err := websocket.DefaultDialer.Dial(wsURL, wsHeaders)
+	if err != nil {
+		t.Fatalf("expected player websocket stream access, got dial error: %v", err)
+	}
+	_ = wsConn.Close()
+}
+
+func setupIntegrationStack(t *testing.T) (controllerSrv, dbEngineSrv, gatewaySrv *httptest.Server, cleanup func()) {
+	t.Helper()
+
+	ctx := context.Background()
+	store, err := database.OpenSQLite(ctx, "file::memory:?cache=shared")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	store.RegisterController(controller.SchemaController{})
+
+	auth := controller.NewAuthController(secret, issuer)
+	controllerSrv = httptest.NewServer(api.NewControllerService(auth, adminToken).Router())
+	dbEngineSrv = httptest.NewServer(api.NewDBEngineServer(store, internalToken).Router())
+	gatewaySrv = httptest.NewServer(api.NewGatewayServer(controllerSrv.URL, dbEngineSrv.URL, internalToken).Router())
+
+	cleanup = func() {
+		gatewaySrv.Close()
+		dbEngineSrv.Close()
+		controllerSrv.Close()
+		_ = store.Close()
+	}
+	return controllerSrv, dbEngineSrv, gatewaySrv, cleanup
+}
+
+const (
+	secret        = "test-secret"
+	issuer        = "test-issuer"
+	internalToken = "internal-token"
+	adminToken    = "admin-token"
+)
 
 func issueToken(t *testing.T, baseURL, adminToken, userID, tenantID, role string) string {
 	t.Helper()
