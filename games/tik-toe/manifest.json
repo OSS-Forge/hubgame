@@ -4,16 +4,18 @@
   "version": "0.1.0",
   "author": "hubgame",
   "inhouse": true,
-  "description": "Advanced tic-tac-toe with custom board sizes, bots, turn timers, and tactical modifiers.",
-  "entry": "index.html",
+  "description": "Advanced tic-tac-toe with React UI, bot play, online matchmaking, chat, emoji, and flexible board settings.",
+  "entry": "dist/index.html",
   "categories": ["Strategy", "Board", "Puzzle"],
   "modes": ["Solo", "Offline Multiplayer", "Bot Match"],
   "supports": {
-    "online": false,
+    "online": true,
     "offline": true,
     "bots": true,
     "modifiers": true,
-    "spectators": false
+    "spectators": false,
+    "chat": true,
+    "emoji": true
   },
   "cover": "assets/cover.svg",
   "screenshots": [

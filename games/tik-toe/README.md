@@ -1,22 +1,33 @@
-# Tik-Toe: Mod Arena
+# Tik-Toe: Mod Arena (React)
 
-In-house advanced tic-tac-toe for HubGame.
+In-house advanced tic-tac-toe for HubGame, rewritten in React + Tailwind + Bun.
 
 ## Features
-- Board sizes: 3x3, 4x4, 5x5
-- Configurable win condition (3/4/5 in a row)
-- Local multiplayer and bot mode (easy/medium/hard)
-- Turn timer with automatic fallback moves
-- Tactical modifiers per player:
-  - Double Move
-  - Freeze Cell
-  - Swap Symbols
-  - Undo Last Move
-- Match event log
+- Minimal first-screen UX with mode selection (`Offline` / `Online`)
+- Advanced settings toggle (board size + win length)
+- Offline mode:
+  - Local 2-player
+  - Bot mode
+- Online mode:
+  - Matchmaking queue
+  - Auto-match status polling
+  - Server-authoritative moves
+  - Match chat + emoji reactions
 
-## Run
-Open `index.html` directly, or serve from any static server.
+## Run (dev)
+```bash
+cd games/tik-toe
+bun install
+bun run dev
+```
 
-## Manifest
-`manifest.json` includes required metadata with in-house author:
-- `author: "hubgame"`
+## Build
+```bash
+cd games/tik-toe
+bun run build
+```
+
+Build output: `dist/index.html` (used by manifest entry).
+
+## Manifest policy
+- `author` is set to `hubgame` for in-house games.

@@ -30,7 +30,30 @@ async function main() {
 
     const sourceGameDir = dirname(manifestPath)
     const targetGameDir = join(webGamesDir, gameId)
-    await cp(sourceGameDir, targetGameDir, { recursive: true })
+    await mkdir(targetGameDir, { recursive: true })
+
+    if (!manifest.entry.startsWith('dist/')) {
+      throw new Error(`[${gameId}] manifest.entry must point to dist/* for web fallback sync`)
+    }
+    const distDir = join(sourceGameDir, 'dist')
+    if (!existsSync(distDir)) {
+      throw new Error(`[${gameId}] missing dist folder. Run game build before syncing.`)
+    }
+    await cp(distDir, join(targetGameDir, 'dist'), { recursive: true })
+
+    const manifestTarget = join(targetGameDir, 'manifest.json')
+    await cp(manifestPath, manifestTarget)
+
+    const readmePath = join(sourceGameDir, 'README.md')
+    if (existsSync(readmePath)) {
+      await cp(readmePath, join(targetGameDir, 'README.md'))
+    }
+    if (manifest.cover || (Array.isArray(manifest.screenshots) && manifest.screenshots.length > 0)) {
+      const assetsDir = join(sourceGameDir, 'assets')
+      if (existsSync(assetsDir)) {
+        await cp(assetsDir, join(targetGameDir, 'assets'), { recursive: true })
+      }
+    }
 
     fallback.push({
       id: manifest.id,

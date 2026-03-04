@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-03-04T18:05:13.945Z",
+  "generatedAt": "2026-03-04T19:17:49.861Z",
   "count": 1,
   "games": [
     {
@@ -8,7 +8,7 @@
       "version": "0.1.0",
       "author": "hubgame",
       "inhouse": true,
-      "description": "Advanced tic-tac-toe with custom board sizes, bots, turn timers, and tactical modifiers.",
+      "description": "Advanced tic-tac-toe with React UI, bot play, online matchmaking, chat, emoji, and flexible board settings.",
       "categories": [
         "Strategy",
         "Board",
@@ -26,9 +26,9 @@
         "board-game"
       ],
       "cover": "assets/cover.svg",
-      "entry": "tik-toe/index.html",
+      "entry": "tik-toe/dist/index.html",
       "manifest": "games/tik-toe/manifest.json",
-      "publishedAt": "2026-03-04T18:05:13.945Z"
+      "publishedAt": "2026-03-04T19:17:49.861Z"
     }
   ]
 }

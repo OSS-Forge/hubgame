@@ -16,3 +16,4 @@
 - Added `/games` static fallback integration: publish + sync scripts feeding `web/public/fallback-catalog.json` when gateway is unavailable.
 - Added `web-store` service to Docker Compose for running frontend in the containerized stack.
 - Added backend leaderboard APIs (global and per-game), developer score/hubcoin hooks, and web leaderboard UI integration.
+- Added Tik-Toe full-stack upgrade: React/Tailwind/Bun game client + backend matchmaking/match/chat APIs.
