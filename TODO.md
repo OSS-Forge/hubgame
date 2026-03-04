@@ -2,6 +2,7 @@
 
 ## Global
 - [x] Add integration tests for auth + websocket stream through gateway proxy.
+- [ ] Add docker-compose smoke script for containerized auth/http/websocket checks.
 - [ ] Design SDK contract for client games (TypeScript package).
 - [ ] Implement matchmaking + room orchestration service.
 - [ ] Add CI workflow for tests/build/lint.
