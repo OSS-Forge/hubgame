@@ -1,7 +1,7 @@
 # HubGame TODO
 
 ## Global
-- [ ] Add integration tests for auth + websocket stream through gateway proxy.
+- [x] Add integration tests for auth + websocket stream through gateway proxy.
 - [ ] Design SDK contract for client games (TypeScript package).
 - [ ] Implement matchmaking + room orchestration service.
 - [ ] Add CI workflow for tests/build/lint.
