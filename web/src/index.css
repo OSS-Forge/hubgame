@@ -24,10 +24,51 @@ body {
 .store-shell {
   position: relative;
   overflow: hidden;
+  --mx: 50%;
+  --my: 50%;
   background:
     radial-gradient(1200px 600px at -10% -5%, #f4e4cf 0%, transparent 60%),
     radial-gradient(800px 500px at 110% 10%, #e4c59f 0%, transparent 55%),
     linear-gradient(180deg, #e7d0b4 0%, #dcc1a0 100%);
+}
+
+.store-grid,
+.store-grid-fine {
+  pointer-events: none;
+  position: absolute;
+  inset: -30px;
+  opacity: 0.25;
+  transition: transform 0.18s ease-out;
+}
+
+.store-grid {
+  background-image:
+    linear-gradient(to right, rgba(120, 85, 45, 0.16) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(120, 85, 45, 0.16) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(circle at var(--mx) var(--my), black 18%, transparent 80%);
+  transform: translate(
+      calc((var(--mx) - 50%) * 0.05),
+      calc((var(--my) - 50%) * 0.05)
+    )
+    rotate(-1.2deg);
+}
+
+.store-grid-fine {
+  background-image:
+    radial-gradient(circle at center, rgba(84, 56, 24, 0.14) 1px, transparent 1px),
+    linear-gradient(120deg, rgba(142, 108, 72, 0.12) 1px, transparent 1px);
+  background-size:
+    22px 22px,
+    120px 120px;
+  opacity: 0.18;
+  mix-blend-mode: multiply;
+  mask-image: radial-gradient(circle at var(--mx) var(--my), black 22%, transparent 78%);
+  transform: translate(
+      calc((50% - var(--mx)) * 0.04),
+      calc((50% - var(--my)) * 0.04)
+    )
+    rotate(0.8deg);
 }
 
 .store-glow {

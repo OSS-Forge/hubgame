@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type CSSProperties } from 'react'
 
 type Game = {
   id: string
@@ -120,6 +120,7 @@ const modes = ['All', 'Solo', 'Online Multiplayer', 'Offline Multiplayer', 'Bot 
 const sortOptions = ['Curated', 'Top Rated', 'Most Active', 'A-Z'] as const
 
 function App() {
+  const [pointer, setPointer] = useState({ x: 50, y: 50 })
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<(typeof categories)[number]>('All')
   const [mode, setMode] = useState<(typeof modes)[number]>('All')
@@ -152,11 +153,27 @@ function App() {
   }, [category, installedOnly, mode, query, sortBy])
 
   const featured = filteredGames[0] ?? games[0]
+  const shellStyle = {
+    '--mx': `${pointer.x}%`,
+    '--my': `${pointer.y}%`,
+  } as CSSProperties
 
   return (
-    <div className="store-shell min-h-screen text-stone-800">
+    <div
+      className="store-shell min-h-screen text-stone-800"
+      style={shellStyle}
+      onMouseMove={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect()
+        const x = ((event.clientX - rect.left) / rect.width) * 100
+        const y = ((event.clientY - rect.top) / rect.height) * 100
+        setPointer({ x, y })
+      }}
+      onMouseLeave={() => setPointer({ x: 50, y: 50 })}
+    >
       <div className="store-glow store-glow-a" />
       <div className="store-glow store-glow-b" />
+      <div className="store-grid" />
+      <div className="store-grid-fine" />
 
       <main className="relative mx-auto max-w-[1300px] px-4 pb-14 pt-8 sm:px-6 lg:px-8">
         <header className="reveal-up mb-7 rounded-[30px] border border-[#d9c9b2] bg-[#f2e7d8]/85 p-5 shadow-[0_16px_40px_rgba(82,57,27,0.08)] backdrop-blur-sm sm:p-7">
