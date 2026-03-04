@@ -314,6 +314,70 @@ func TestGatewayIntegrationTiktoeOnlineAndChat(t *testing.T) {
 	}
 }
 
+func TestGatewayIntegrationTiktoeMatchmakingDistinctUsers(t *testing.T) {
+	controllerSrv, _, gatewaySrv, cleanup := setupIntegrationStack(t)
+	defer cleanup()
+
+	devToken := issueToken(t, controllerSrv.URL, adminToken, "dev-1", "t-1", "developer")
+
+	one := requestJSON(t, http.MethodPost, gatewaySrv.URL+"/v1/tiktoe/matchmaking/enqueue", devToken, map[string]any{
+		"user_id":      "player1",
+		"display_name": "Player One",
+		"board_size":   3,
+		"win_length":   3,
+	}, nil)
+	if one.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 first enqueue, got %d", one.StatusCode)
+	}
+	one.Body.Close()
+
+	sameUser := requestJSON(t, http.MethodPost, gatewaySrv.URL+"/v1/tiktoe/matchmaking/enqueue", devToken, map[string]any{
+		"user_id":      "PLAYER1",
+		"display_name": "Player One Uppercase",
+		"board_size":   3,
+		"win_length":   3,
+	}, nil)
+	if sameUser.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 same-user enqueue, got %d", sameUser.StatusCode)
+	}
+	var samePayload map[string]any
+	if err := json.NewDecoder(sameUser.Body).Decode(&samePayload); err != nil {
+		t.Fatalf("decode same-user enqueue: %v", err)
+	}
+	sameUser.Body.Close()
+	if samePayload["status"] != "queued" {
+		t.Fatalf("expected queued status for same user, got %v", samePayload["status"])
+	}
+
+	second := requestJSON(t, http.MethodPost, gatewaySrv.URL+"/v1/tiktoe/matchmaking/enqueue", devToken, map[string]any{
+		"user_id":      "player2",
+		"display_name": "Player Two",
+		"board_size":   3,
+		"win_length":   3,
+	}, nil)
+	if second.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 second user enqueue, got %d", second.StatusCode)
+	}
+	var matched struct {
+		Status string `json:"status"`
+		Match  struct {
+			ID      string `json:"id"`
+			PlayerX string `json:"player_x"`
+			PlayerO string `json:"player_o"`
+		} `json:"match"`
+	}
+	if err := json.NewDecoder(second.Body).Decode(&matched); err != nil {
+		t.Fatalf("decode second enqueue: %v", err)
+	}
+	second.Body.Close()
+	if matched.Status != "matched" || matched.Match.ID == "" {
+		t.Fatalf("expected matched status with match id")
+	}
+	if matched.Match.PlayerX != "player2" || matched.Match.PlayerO != "player1" {
+		t.Fatalf("expected requester to match distinct queued user, got x=%q o=%q", matched.Match.PlayerX, matched.Match.PlayerO)
+	}
+}
+
 func TestGatewayIntegrationTiktoeDirectUsernameMatch(t *testing.T) {
 	controllerSrv, _, gatewaySrv, cleanup := setupIntegrationStack(t)
 	defer cleanup()

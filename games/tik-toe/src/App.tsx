@@ -40,7 +40,7 @@ export function App() {
   const [onlineFlow, setOnlineFlow] = useState<OnlineFlow>('auto')
   const [advanced, setAdvanced] = useState(false)
 
-  const [playerName, setPlayerName] = useState('Player1')
+  const [playerName, setPlayerName] = useState(() => getDefaultPlayerName())
   const [opponentName, setOpponentName] = useState('Player2')
   const [targetUsername, setTargetUsername] = useState('')
 
@@ -61,6 +61,12 @@ export function App() {
     const saved = localStorage.getItem(TOKEN_STORAGE_KEY)
     if (saved) setToken(saved)
   }, [])
+
+  useEffect(() => {
+    if (playerName.trim()) {
+      sessionStorage.setItem('hubgame.player_name', playerName.trim())
+    }
+  }, [playerName])
 
   useEffect(() => {
     if (!match || screen !== 'play' || mode !== 'online' || !token) return
@@ -181,7 +187,7 @@ export function App() {
         }
         await sleep(1000)
       }
-      setStatus('No opponent yet. Try again.')
+      setStatus('No opponent yet. Use a different username in each tab and try again.')
     } catch (err) {
       setStatus(err instanceof Error ? err.message : 'Failed to start')
     } finally {
@@ -457,6 +463,9 @@ export function App() {
                     className="mt-2 w-full rounded-xl border border-[#ceb08f] bg-white px-3 py-2"
                   />
                 ) : null}
+                {onlineFlow === 'auto' ? (
+                  <p className="mt-2 text-xs text-[#7a5a3f]">Tip: each player must use a different username to be matched.</p>
+                ) : null}
               </div>
             )}
 
@@ -711,4 +720,15 @@ function slugify(v: string) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function getDefaultPlayerName() {
+  const key = 'hubgame.player_name'
+  const existing = sessionStorage.getItem(key)
+  if (existing && existing.trim()) {
+    return existing.trim()
+  }
+  const next = `player-${Math.random().toString(36).slice(2, 6)}`
+  sessionStorage.setItem(key, next)
+  return next
 }
