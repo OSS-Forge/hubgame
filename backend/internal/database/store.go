@@ -123,6 +123,7 @@ func (s *Store) GetEntity(ctx context.Context, tenantID, id string) (*Entity, er
 	err := s.db.QueryRowContext(ctx, `
 SELECT id, tenant_id, kind, data, version, created_at, updated_at, deleted_at
 FROM entities WHERE tenant_id = ? AND id = ?
+AND deleted_at IS NULL
 `, tenantID, id).Scan(
 		&e.ID, &e.TenantID, &e.Kind, &data, &e.Version, &e.CreatedAt, &e.UpdatedAt, &deleted,
 	)
@@ -137,6 +138,34 @@ FROM entities WHERE tenant_id = ? AND id = ?
 		e.DeletedAt = &deleted.Time
 	}
 	return &e, nil
+}
+
+func (s *Store) RestoreEntity(ctx context.Context, e *Entity) error {
+	if len(e.Data) == 0 {
+		e.Data = json.RawMessage(`{}`)
+	}
+	now := time.Now().UTC()
+	res, err := s.db.ExecContext(ctx, `
+UPDATE entities
+SET kind = ?, data = ?, deleted_at = NULL, updated_at = ?, version = version + 1
+WHERE tenant_id = ? AND id = ?
+`, e.Kind, string(e.Data), now, e.TenantID, e.ID)
+	if err != nil {
+		return err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return ErrNotFound
+	}
+	e.UpdatedAt = now
+	_, _ = s.AppendEvent(ctx, Event{
+		TenantID: e.TenantID,
+		Topic:    "entity." + e.Kind,
+		Key:      e.ID,
+		Type:     "entity.restored",
+		Payload:  mustJSON(e),
+	})
+	return nil
 }
 
 func (s *Store) UpdateEntity(ctx context.Context, next *Entity) error {

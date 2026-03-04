@@ -157,7 +157,7 @@ func enqueueTiktoe(ctx context.Context, store *database.Store, tenantID string, 
 	ticketData, _ := json.Marshal(ticket)
 	err := store.InsertEntity(ctx, &database.Entity{ID: queueID, TenantID: tenantID, Kind: tiktoeQueueKind, Data: ticketData})
 	if err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed") {
-		_ = store.UpdateEntity(ctx, &database.Entity{ID: queueID, TenantID: tenantID, Data: ticketData})
+		_ = store.RestoreEntity(ctx, &database.Entity{ID: queueID, TenantID: tenantID, Kind: tiktoeQueueKind, Data: ticketData})
 	}
 
 	queue, err := store.ListEntities(ctx, tenantID, tiktoeQueueKind, 5000)

@@ -378,6 +378,60 @@ func TestGatewayIntegrationTiktoeMatchmakingDistinctUsers(t *testing.T) {
 	}
 }
 
+func TestGatewayIntegrationTiktoeMatchmakingReenqueueAfterMatch(t *testing.T) {
+	controllerSrv, _, gatewaySrv, cleanup := setupIntegrationStack(t)
+	defer cleanup()
+
+	devToken := issueToken(t, controllerSrv.URL, adminToken, "dev-1", "t-1", "developer")
+
+	for _, user := range []string{"p1", "p2"} {
+		resp := requestJSON(t, http.MethodPost, gatewaySrv.URL+"/v1/tiktoe/matchmaking/enqueue", devToken, map[string]any{
+			"user_id":      user,
+			"display_name": user,
+			"board_size":   3,
+			"win_length":   3,
+		}, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 enqueue for %s, got %d", user, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+
+	reenqueue := requestJSON(t, http.MethodPost, gatewaySrv.URL+"/v1/tiktoe/matchmaking/enqueue", devToken, map[string]any{
+		"user_id":      "p1",
+		"display_name": "p1",
+		"board_size":   3,
+		"win_length":   3,
+	}, nil)
+	if reenqueue.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 re-enqueue for p1, got %d", reenqueue.StatusCode)
+	}
+	reenqueue.Body.Close()
+
+	secondRound := requestJSON(t, http.MethodPost, gatewaySrv.URL+"/v1/tiktoe/matchmaking/enqueue", devToken, map[string]any{
+		"user_id":      "p3",
+		"display_name": "p3",
+		"board_size":   3,
+		"win_length":   3,
+	}, nil)
+	if secondRound.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 second round enqueue, got %d", secondRound.StatusCode)
+	}
+	var payload struct {
+		Status string `json:"status"`
+		Match  struct {
+			ID string `json:"id"`
+		} `json:"match"`
+	}
+	if err := json.NewDecoder(secondRound.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode second round payload: %v", err)
+	}
+	secondRound.Body.Close()
+	if payload.Status != "matched" || payload.Match.ID == "" {
+		t.Fatalf("expected matched status after re-enqueue, got status=%q id=%q", payload.Status, payload.Match.ID)
+	}
+}
+
 func TestGatewayIntegrationTiktoeDirectUsernameMatch(t *testing.T) {
 	controllerSrv, _, gatewaySrv, cleanup := setupIntegrationStack(t)
 	defer cleanup()
