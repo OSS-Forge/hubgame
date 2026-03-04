@@ -46,12 +46,8 @@ body {
     linear-gradient(to right, rgba(84, 58, 30, 0.22) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(84, 58, 30, 0.22) 1px, transparent 1px);
   background-size: 56px 56px;
-  mask-image: radial-gradient(circle at var(--mx) var(--my), black 34%, transparent 92%);
-  transform: translate(
-      calc((var(--mx) - 50%) * 0.05),
-      calc((var(--my) - 50%) * 0.05)
-    )
-    rotate(-0.8deg);
+  opacity: 0.18;
+  transform: rotate(-0.6deg);
 }
 
 .store-grid-fine {
@@ -61,7 +57,7 @@ body {
   background-size:
     20px 20px,
     110px 110px;
-  opacity: 0.2;
+  opacity: 0.24;
   mix-blend-mode: multiply;
   mask-image: radial-gradient(circle at var(--mx) var(--my), black 42%, transparent 96%);
   transform: translate(
