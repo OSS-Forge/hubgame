@@ -49,10 +49,11 @@ type chatMessage struct {
 }
 
 type createMatchRequest struct {
-	Mode      string `json:"mode"`
-	BoardSize int    `json:"board_size"`
-	WinLength int    `json:"win_length"`
-	PlayerID  string `json:"player_id"`
+	Mode       string `json:"mode"`
+	BoardSize  int    `json:"board_size"`
+	WinLength  int    `json:"win_length"`
+	PlayerID   string `json:"player_id"`
+	OpponentID string `json:"opponent_id"`
 }
 
 type moveRequest struct {
@@ -85,6 +86,20 @@ func createTiktoeMatch(ctx context.Context, store *database.Store, tenantID stri
 	}
 
 	id := fmt.Sprintf("match_%d", time.Now().UnixNano())
+	opponentID := strings.TrimSpace(req.OpponentID)
+	if mode == "online" && opponentID != "" {
+		id = tiktoeDirectMatchID(req.PlayerID, opponentID, boardSize, winLength)
+		existing, err := store.GetEntity(ctx, tenantID, id)
+		if err == nil {
+			var found tiktoeState
+			if json.Unmarshal(existing.Data, &found) == nil {
+				return &found, nil
+			}
+		}
+		if err != nil && !errors.Is(err, database.ErrNotFound) {
+			return nil, err
+		}
+	}
 	state := &tiktoeState{
 		ID:         id,
 		Mode:       mode,
@@ -100,7 +115,7 @@ func createTiktoeMatch(ctx context.Context, store *database.Store, tenantID stri
 		LastAction: "match.created",
 	}
 	if mode == "online" {
-		state.PlayerO = ""
+		state.PlayerO = opponentID
 	}
 
 	data, _ := json.Marshal(state)
@@ -351,6 +366,15 @@ func tiktoeTopic(matchID string) string {
 
 func tiktoeQueueID(userID string, boardSize, winLength int) string {
 	return fmt.Sprintf("queue:%s:%d:%d", strings.TrimSpace(userID), boardSize, winLength)
+}
+
+func tiktoeDirectMatchID(userA, userB string, boardSize, winLength int) string {
+	a := strings.TrimSpace(strings.ToLower(userA))
+	b := strings.TrimSpace(strings.ToLower(userB))
+	if b < a {
+		a, b = b, a
+	}
+	return fmt.Sprintf("direct:%s:%s:%d:%d", a, b, boardSize, winLength)
 }
 
 func tiktoeChatEntityID(matchID, msgID string) string {

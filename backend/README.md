@@ -85,6 +85,13 @@ Gateway (`:8080`):
 - `POST /v1/tiktoe/matchmaking/enqueue`
 - `GET /v1/tiktoe/matchmaking/status`
 
+Direct username match:
+- `POST /v1/tiktoe/matches` with:
+  - `mode: "online"`
+  - `player_id`
+  - `opponent_id`
+This creates (or returns) a deterministic direct match between the two usernames.
+
 Controller (`:8082`):
 - `GET /healthz`
 - `POST /v1/auth/token`

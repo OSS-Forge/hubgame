@@ -314,6 +314,58 @@ func TestGatewayIntegrationTiktoeOnlineAndChat(t *testing.T) {
 	}
 }
 
+func TestGatewayIntegrationTiktoeDirectUsernameMatch(t *testing.T) {
+	controllerSrv, _, gatewaySrv, cleanup := setupIntegrationStack(t)
+	defer cleanup()
+
+	devToken := issueToken(t, controllerSrv.URL, adminToken, "dev-1", "t-1", "developer")
+
+	first := requestJSON(t, http.MethodPost, gatewaySrv.URL+"/v1/tiktoe/matches", devToken, map[string]any{
+		"mode":        "online",
+		"board_size":  3,
+		"win_length":  3,
+		"player_id":   "alice",
+		"opponent_id": "bob",
+	}, nil)
+	if first.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 first direct match create, got %d", first.StatusCode)
+	}
+	var m1 struct {
+		ID      string `json:"id"`
+		PlayerX string `json:"player_x"`
+		PlayerO string `json:"player_o"`
+	}
+	if err := json.NewDecoder(first.Body).Decode(&m1); err != nil {
+		t.Fatalf("decode direct match first: %v", err)
+	}
+	first.Body.Close()
+
+	second := requestJSON(t, http.MethodPost, gatewaySrv.URL+"/v1/tiktoe/matches", devToken, map[string]any{
+		"mode":        "online",
+		"board_size":  3,
+		"win_length":  3,
+		"player_id":   "bob",
+		"opponent_id": "alice",
+	}, nil)
+	if second.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 second direct match create, got %d", second.StatusCode)
+	}
+	var m2 struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(second.Body).Decode(&m2); err != nil {
+		t.Fatalf("decode direct match second: %v", err)
+	}
+	second.Body.Close()
+
+	if m1.ID == "" || m2.ID == "" {
+		t.Fatalf("expected non-empty direct match IDs")
+	}
+	if m1.ID != m2.ID {
+		t.Fatalf("expected same direct match id for alice/bob challenge pair")
+	}
+}
+
 func setupIntegrationStack(t *testing.T) (controllerSrv, dbEngineSrv, gatewaySrv *httptest.Server, cleanup func()) {
 	t.Helper()
 

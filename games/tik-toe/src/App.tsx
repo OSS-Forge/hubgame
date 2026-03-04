@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 type Mode = 'offline' | 'online'
 type OfflineMode = 'local' | 'bot'
+type OnlineFlow = 'auto' | 'direct'
 
 type MatchState = {
   id: string
@@ -14,8 +15,6 @@ type MatchState = {
   current: 'X' | 'O'
   winner: '' | 'X' | 'O' | 'draw'
   move_count: number
-  updated_at: string
-  last_action: string
 }
 
 type ChatMessage = {
@@ -24,7 +23,6 @@ type ChatMessage = {
   message?: string
   emoji?: string
   type: string
-  created_at: string
 }
 
 const gatewayURL = import.meta.env.VITE_GATEWAY_URL ?? 'http://localhost:8080'
@@ -32,19 +30,27 @@ const gatewayURL = import.meta.env.VITE_GATEWAY_URL ?? 'http://localhost:8080'
 export function App() {
   const matchSocketRef = useRef<WebSocket | null>(null)
   const chatSocketRef = useRef<WebSocket | null>(null)
+
+  const [screen, setScreen] = useState<'choose' | 'setup' | 'play'>('choose')
   const [mode, setMode] = useState<Mode>('offline')
   const [offlineMode, setOfflineMode] = useState<OfflineMode>('bot')
+  const [onlineFlow, setOnlineFlow] = useState<OnlineFlow>('auto')
   const [advanced, setAdvanced] = useState(false)
+
+  const [playerName, setPlayerName] = useState('Player1')
+  const [opponentName, setOpponentName] = useState('Player2')
+  const [targetUsername, setTargetUsername] = useState('')
+
   const [boardSize, setBoardSize] = useState(3)
   const [winLength, setWinLength] = useState(3)
-  const [playerName, setPlayerName] = useState('Player1')
-  const [opponentName, setOpponentName] = useState('Bot')
-  const [token, setToken] = useState<string>('')
-  const [status, setStatus] = useState('Choose mode to start')
-  const [match, setMatch] = useState<MatchState | null>(null)
-  const [chat, setChat] = useState<ChatMessage[]>([])
-  const [chatInput, setChatInput] = useState('')
+
+  const [token, setToken] = useState('')
+  const [status, setStatus] = useState('Select a mode to begin')
   const [loading, setLoading] = useState(false)
+  const [match, setMatch] = useState<MatchState | null>(null)
+  const [chatOpen, setChatOpen] = useState(false)
+  const [chatInput, setChatInput] = useState('')
+  const [chat, setChat] = useState<ChatMessage[]>([])
 
   const myUserID = useMemo(() => slugify(playerName) || 'player1', [playerName])
 
@@ -54,60 +60,72 @@ export function App() {
   }, [])
 
   useEffect(() => {
-    if (!match || mode !== 'online' || !token) return
+    if (!match || screen !== 'play' || mode !== 'online' || !token) return
     connectRealtime(match.id, token)
     void refreshMatch(match.id)
     void refreshChat(match.id)
-    return () => {
-      closeRealtime()
-    }
-  }, [match?.id, mode, token])
+    return () => closeRealtime()
+  }, [match?.id, mode, screen, token])
 
   async function ensureToken() {
     if (token) return token
-    const response = await fetch(`${gatewayURL}/v1/auth/dev-token`, {
+    const res = await fetch(`${gatewayURL}/v1/auth/dev-token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_id: myUserID, tenant_id: 'hubgame-dev', role: 'developer', ttl_seconds: 86400 }),
     })
-    if (!response.ok) throw new Error('Unable to get gateway dev token')
-    const payload = (await response.json()) as { token: string }
+    if (!res.ok) throw new Error('Unable to get gateway token')
+    const payload = (await res.json()) as { token: string }
     localStorage.setItem('hubgame.dev.token', payload.token)
     setToken(payload.token)
     return payload.token
   }
 
-  async function startOffline() {
+  async function startMatch() {
     setLoading(true)
+    setStatus('Starting match...')
     try {
-      const board = createBoard(boardSize)
-      const localMatch: MatchState = {
-        id: `offline_${Date.now()}`,
-        mode: offlineMode,
-        board_size: boardSize,
-        win_length: winLength,
-        board,
-        player_x: myUserID,
-        player_o: offlineMode === 'bot' ? 'bot' : slugify(opponentName) || 'player2',
-        current: 'X',
-        winner: '',
-        move_count: 0,
-        updated_at: new Date().toISOString(),
-        last_action: 'offline.start',
+      if (mode === 'offline') {
+        const localMatch: MatchState = {
+          id: `offline_${Date.now()}`,
+          mode: offlineMode,
+          board_size: boardSize,
+          win_length: winLength,
+          board: createBoard(boardSize),
+          player_x: myUserID,
+          player_o: offlineMode === 'bot' ? 'bot' : slugify(opponentName) || 'player2',
+          current: 'X',
+          winner: '',
+          move_count: 0,
+        }
+        setMatch(localMatch)
+        setScreen('play')
+        setChat([])
+        setStatus('Offline match started')
+        return
       }
-      setMatch(localMatch)
-      setChat([])
-      setStatus(`Offline ${offlineMode} match started`)
-    } finally {
-      setLoading(false)
-    }
-  }
 
-  async function startOnline() {
-    setLoading(true)
-    setStatus('Searching for player...')
-    try {
       const auth = await ensureToken()
+      if (onlineFlow === 'direct') {
+        if (!targetUsername.trim()) throw new Error('Enter target username first')
+        const res = await fetchAPI('/v1/tiktoe/matches', auth, {
+          method: 'POST',
+          body: JSON.stringify({
+            mode: 'online',
+            board_size: boardSize,
+            win_length: winLength,
+            player_id: myUserID,
+            opponent_id: slugify(targetUsername),
+          }),
+        })
+        const payload = (await res.json()) as MatchState
+        setMatch(payload)
+        setChat([])
+        setScreen('play')
+        setStatus(`Direct match ready vs ${payload.player_o || targetUsername}`)
+        return
+      }
+
       await fetchAPI('/v1/tiktoe/matchmaking/enqueue', auth, {
         method: 'POST',
         body: JSON.stringify({
@@ -117,34 +135,33 @@ export function App() {
           win_length: winLength,
         }),
       })
+      setStatus('Searching opponent...')
 
-      let tries = 0
-      while (tries < 30) {
-        const res = await fetchAPI(
+      for (let i = 0; i < 35; i++) {
+        const poll = await fetchAPI(
           `/v1/tiktoe/matchmaking/status?user_id=${encodeURIComponent(myUserID)}&board_size=${boardSize}&win_length=${winLength}`,
           auth,
           { method: 'GET' },
         )
-        const payload = (await res.json()) as { status: string; match?: MatchState }
+        const payload = (await poll.json()) as { status: string; match?: MatchState }
         if (payload.status === 'matched' && payload.match) {
           setMatch(payload.match)
           setChat([])
-          await refreshChat(payload.match.id)
-          setStatus(`Matched! ${payload.match.player_x} vs ${payload.match.player_o}`)
+          setScreen('play')
+          setStatus(`Matched: ${payload.match.player_x} vs ${payload.match.player_o}`)
           return
         }
         await sleep(1000)
-        tries += 1
       }
-      setStatus('Still searching. Try again or adjust board settings.')
+      setStatus('No match yet. Try again.')
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : 'Matchmaking failed')
+      setStatus(err instanceof Error ? err.message : 'Failed to start')
     } finally {
       setLoading(false)
     }
   }
 
-  async function makeMove(row: number, col: number) {
+  async function playCell(row: number, col: number) {
     if (!match || match.winner) return
 
     if (mode === 'offline') {
@@ -197,16 +214,16 @@ export function App() {
     }
   }
 
-  async function refreshMatch(id: string) {
+  async function refreshMatch(matchID: string) {
     const auth = await ensureToken()
-    const res = await fetchAPI(`/v1/tiktoe/matches/${id}`, auth, { method: 'GET' })
+    const res = await fetchAPI(`/v1/tiktoe/matches/${matchID}`, auth, { method: 'GET' })
     const payload = (await res.json()) as MatchState
     setMatch(payload)
   }
 
-  async function refreshChat(id: string) {
+  async function refreshChat(matchID: string) {
     const auth = await ensureToken()
-    const res = await fetchAPI(`/v1/tiktoe/matches/${id}/chat?limit=40`, auth, { method: 'GET' })
+    const res = await fetchAPI(`/v1/tiktoe/matches/${matchID}/chat?limit=40`, auth, { method: 'GET' })
     const payload = (await res.json()) as ChatMessage[]
     setChat(payload)
   }
@@ -229,10 +246,8 @@ export function App() {
 
   function connectRealtime(matchID: string, authToken: string) {
     closeRealtime()
-
     const wsBase = gatewayURL.replace(/^http/, 'ws')
     const access = encodeURIComponent(authToken)
-
     const matchSocket = new WebSocket(
       `${wsBase}/v1/events/stream?topic=${encodeURIComponent(`tiktoe.match.${matchID}`)}&access_token=${access}`,
     )
@@ -242,38 +257,32 @@ export function App() {
 
     matchSocket.onmessage = (event) => {
       try {
-        const envelope = JSON.parse(event.data) as { type?: string; payload?: MatchState }
-        if (!envelope.payload) return
-        setMatch(envelope.payload)
+        const e = JSON.parse(event.data) as { payload?: MatchState }
+        if (e.payload) setMatch(e.payload)
       } catch {
-        // ignore malformed events
+        // ignore
       }
     }
 
     chatSocket.onmessage = (event) => {
       try {
-        const envelope = JSON.parse(event.data) as { payload?: ChatMessage }
-        if (!envelope.payload) return
-        setChat((prev) => {
-          if (prev.some((msg) => msg.id === envelope.payload?.id)) return prev
-          return [...prev, envelope.payload as ChatMessage]
-        })
+        const e = JSON.parse(event.data) as { payload?: ChatMessage }
+        if (!e.payload) return
+        setChat((prev) => (prev.some((m) => m.id === e.payload!.id) ? prev : [...prev, e.payload!]))
       } catch {
-        // ignore malformed events
+        // ignore
       }
     }
 
     const reconnect = () => {
-      if (mode !== 'online') return
       setTimeout(() => {
-        if (match?.id === matchID && token === authToken) {
+        if (match?.id === matchID && token === authToken && mode === 'online') {
           connectRealtime(matchID, authToken)
           void refreshMatch(matchID)
           void refreshChat(matchID)
         }
       }, 1200)
     }
-
     matchSocket.onclose = reconnect
     chatSocket.onclose = reconnect
 
@@ -294,209 +303,251 @@ export function App() {
     }
   }
 
-  const currentTurnLabel = match ? `${match.current} turn` : 'No match started'
+  function goToSetup(nextMode: Mode) {
+    setMode(nextMode)
+    setScreen('setup')
+    setStatus(nextMode === 'online' ? 'Set your online preferences' : 'Set your offline preferences')
+  }
+
+  function leaveMatch() {
+    closeRealtime()
+    setMatch(null)
+    setChat([])
+    setChatOpen(false)
+    setScreen('choose')
+    setStatus('Select a mode to begin')
+  }
 
   return (
-    <div className="min-h-screen p-4 text-[#3f2d1f] sm:p-6">
-      <div className="mx-auto grid max-w-7xl gap-4 lg:grid-cols-[330px_1fr_320px]">
-        <aside className="rounded-3xl border border-[#ccb18f] bg-[#f2e6d7]/90 p-4 shadow-md sm:p-5">
-          <h1 className="text-2xl font-semibold">Tik-Toe: Mod Arena</h1>
-          <p className="mt-1 text-sm text-[#75563b]">Minimal by default, advanced when needed.</p>
-
-          <div className="mt-4 grid gap-2">
-            <label className="text-xs uppercase tracking-[0.14em] text-[#78563a]">Your name</label>
-            <input
-              value={playerName}
-              onChange={(e) => setPlayerName(e.target.value)}
-              className="rounded-xl border border-[#ceb08f] bg-[#f7efe3] px-3 py-2"
-            />
-          </div>
-
-          <div className="mt-4 grid gap-2">
-            <label className="text-xs uppercase tracking-[0.14em] text-[#78563a]">Mode</label>
-            <div className="flex gap-2">
+    <div className="min-h-screen px-4 py-6 text-[#3f2d1f] sm:px-6">
+      <div className="mx-auto max-w-4xl">
+        {screen === 'choose' ? (
+          <section className="rounded-3xl border border-[#ccb18f] bg-[#f2e6d7]/90 p-6 text-center shadow-md sm:p-10">
+            <h1 className="text-3xl font-semibold sm:text-4xl">Tik-Toe</h1>
+            <p className="mt-2 text-sm text-[#6f5038]">Choose how you want to play.</p>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
               <button
-                onClick={() => setMode('offline')}
-                className={`rounded-full border px-3 py-2 text-sm ${mode === 'offline' ? 'bg-[#7f5e3d] text-[#fff6ea]' : 'bg-[#efdfca]'}`}
+                onClick={() => goToSetup('offline')}
+                className="rounded-2xl border border-[#b89c78] bg-[#ead4ba] px-4 py-4 text-lg font-semibold hover:bg-[#e1c7a8]"
               >
                 Offline
               </button>
               <button
-                onClick={() => setMode('online')}
-                className={`rounded-full border px-3 py-2 text-sm ${mode === 'online' ? 'bg-[#7f5e3d] text-[#fff6ea]' : 'bg-[#efdfca]'}`}
+                onClick={() => goToSetup('online')}
+                className="rounded-2xl border border-[#7f5e3d] bg-[#7f5e3d] px-4 py-4 text-lg font-semibold text-[#fff4e7] hover:bg-[#6f5035]"
               >
                 Online
               </button>
             </div>
-          </div>
+          </section>
+        ) : null}
 
-          {mode === 'offline' ? (
-            <div className="mt-4 grid gap-2">
-              <label className="text-xs uppercase tracking-[0.14em] text-[#78563a]">Offline type</label>
-              <select
-                value={offlineMode}
-                onChange={(e) => setOfflineMode(e.target.value as OfflineMode)}
-                className="rounded-xl border border-[#ceb08f] bg-[#f7efe3] px-3 py-2"
-              >
-                <option value="bot">Play vs Bot</option>
-                <option value="local">Local 2 Players</option>
-              </select>
-              {offlineMode === 'local' ? (
+        {screen === 'setup' ? (
+          <section className="rounded-3xl border border-[#ccb18f] bg-[#f2e6d7]/90 p-5 shadow-md sm:p-6">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-2xl font-semibold">{mode === 'online' ? 'Online Setup' : 'Offline Setup'}</h2>
+              <button onClick={() => setScreen('choose')} className="rounded-full border border-[#b89c78] bg-[#ecd8bf] px-3 py-1 text-sm">
+                Back
+              </button>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="text-xs uppercase tracking-[0.14em] text-[#78563a]">Your username</label>
                 <input
-                  placeholder="Second player name"
-                  value={opponentName}
-                  onChange={(e) => setOpponentName(e.target.value)}
-                  className="rounded-xl border border-[#ceb08f] bg-[#f7efe3] px-3 py-2"
+                  value={playerName}
+                  onChange={(e) => setPlayerName(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-[#ceb08f] bg-[#f7efe3] px-3 py-2"
                 />
+              </div>
+              {mode === 'offline' && offlineMode === 'local' ? (
+                <div>
+                  <label className="text-xs uppercase tracking-[0.14em] text-[#78563a]">Second player</label>
+                  <input
+                    value={opponentName}
+                    onChange={(e) => setOpponentName(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-[#ceb08f] bg-[#f7efe3] px-3 py-2"
+                  />
+                </div>
               ) : null}
             </div>
-          ) : (
-            <p className="mt-4 rounded-xl border border-[#cbb090] bg-[#f7efdf] px-3 py-2 text-sm text-[#6a4e36]">
-              Online mode uses backend matchmaking and realtime match refresh.
-            </p>
-          )}
 
+            {mode === 'offline' ? (
+              <div className="mt-4">
+                <label className="text-xs uppercase tracking-[0.14em] text-[#78563a]">Offline type</label>
+                <div className="mt-1 flex gap-2">
+                  <button
+                    onClick={() => setOfflineMode('bot')}
+                    className={`rounded-full border px-3 py-1.5 text-sm ${offlineMode === 'bot' ? 'bg-[#7f5e3d] text-[#fff4e7]' : 'bg-[#efdfca]'}`}
+                  >
+                    Bot
+                  </button>
+                  <button
+                    onClick={() => setOfflineMode('local')}
+                    className={`rounded-full border px-3 py-1.5 text-sm ${offlineMode === 'local' ? 'bg-[#7f5e3d] text-[#fff4e7]' : 'bg-[#efdfca]'}`}
+                  >
+                    Local 2P
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-2xl border border-[#ceb08f] bg-[#f7efdf] p-3">
+                <label className="text-xs uppercase tracking-[0.14em] text-[#78563a]">Online match style</label>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={() => setOnlineFlow('auto')}
+                    className={`rounded-full border px-3 py-1.5 text-sm ${onlineFlow === 'auto' ? 'bg-[#7f5e3d] text-[#fff4e7]' : 'bg-[#efdfca]'}`}
+                  >
+                    Auto Match
+                  </button>
+                  <button
+                    onClick={() => setOnlineFlow('direct')}
+                    className={`rounded-full border px-3 py-1.5 text-sm ${onlineFlow === 'direct' ? 'bg-[#7f5e3d] text-[#fff4e7]' : 'bg-[#efdfca]'}`}
+                  >
+                    Direct Username
+                  </button>
+                </div>
+                {onlineFlow === 'direct' ? (
+                  <input
+                    value={targetUsername}
+                    onChange={(e) => setTargetUsername(e.target.value)}
+                    placeholder="Opponent username"
+                    className="mt-2 w-full rounded-xl border border-[#ceb08f] bg-white px-3 py-2"
+                  />
+                ) : null}
+              </div>
+            )}
+
+            <button
+              onClick={() => setAdvanced((v) => !v)}
+              className="mt-4 rounded-full border border-[#b89c78] bg-[#ecd8bf] px-3 py-1 text-sm"
+            >
+              {advanced ? 'Hide advanced settings' : 'Advanced settings'}
+            </button>
+
+            {advanced ? (
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="text-xs uppercase tracking-[0.14em] text-[#78563a]">Board size</label>
+                  <select
+                    value={boardSize}
+                    onChange={(e) => {
+                      const size = Number(e.target.value)
+                      setBoardSize(size)
+                      setWinLength(Math.min(size, winLength))
+                    }}
+                    className="mt-1 w-full rounded-xl border border-[#ceb08f] bg-[#f7efe3] px-3 py-2"
+                  >
+                    <option value={3}>3x3</option>
+                    <option value={4}>4x4</option>
+                    <option value={5}>5x5</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs uppercase tracking-[0.14em] text-[#78563a]">Win length</label>
+                  <select
+                    value={winLength}
+                    onChange={(e) => setWinLength(Number(e.target.value))}
+                    className="mt-1 w-full rounded-xl border border-[#ceb08f] bg-[#f7efe3] px-3 py-2"
+                  >
+                    {[3, 4, 5].filter((v) => v <= boardSize).map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            ) : null}
+
+            <button
+              disabled={loading}
+              onClick={() => void startMatch()}
+              className="mt-5 rounded-xl bg-[#6d4c2e] px-5 py-2.5 text-sm font-semibold text-[#fff4e7] disabled:opacity-60"
+            >
+              {loading ? 'Please wait...' : mode === 'online' ? 'Start Online' : 'Start Offline'}
+            </button>
+          </section>
+        ) : null}
+
+        {screen === 'play' ? (
+          <section className="rounded-3xl border border-[#ccb18f] bg-[#f2e6d7]/90 p-4 shadow-md sm:p-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-xl font-semibold">{status}</h2>
+              <button onClick={leaveMatch} className="rounded-full border border-[#b89c78] bg-[#ecd8bf] px-3 py-1 text-sm">
+                Exit
+              </button>
+            </div>
+
+            {match ? (
+              <div
+                className="mx-auto grid gap-2"
+                style={{ gridTemplateColumns: `repeat(${match.board_size}, minmax(0, 1fr))`, maxWidth: 720 }}
+              >
+                {match.board.flatMap((row, r) =>
+                  row.map((cell, c) => (
+                    <button
+                      key={`${r}-${c}`}
+                      onClick={() => void playCell(r, c)}
+                      className="aspect-square rounded-xl border border-[#bfa182] bg-[#f8f0e5] text-3xl font-bold text-[#4f3522] hover:bg-[#f4e9db]"
+                    >
+                      {cell || ''}
+                    </button>
+                  )),
+                )}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+      </div>
+
+      {screen === 'play' && mode === 'online' ? (
+        <div className="fixed bottom-4 right-4 z-20">
           <button
-            onClick={() => setAdvanced((v) => !v)}
-            className="mt-4 rounded-full border border-[#b89c78] bg-[#ecd8bf] px-3 py-1 text-sm"
+            onClick={() => setChatOpen((v) => !v)}
+            className="rounded-full border border-[#6f5035] bg-[#6f5035] px-4 py-2 text-sm font-semibold text-[#fff4e7] shadow-lg"
           >
-            {advanced ? 'Hide Advanced' : 'Open Advanced Settings'}
+            {chatOpen ? 'Close Chat' : 'Chat'}
           </button>
 
-          {advanced ? (
-            <div className="mt-3 grid gap-3 rounded-2xl border border-[#ceb08f] bg-[#f7efdf] p-3">
-              <div>
-                <label className="text-xs uppercase tracking-[0.14em] text-[#78563a]">Board</label>
-                <select
-                  value={boardSize}
-                  onChange={(e) => {
-                    const size = Number(e.target.value)
-                    setBoardSize(size)
-                    setWinLength(Math.min(size, winLength))
-                  }}
-                  className="mt-1 w-full rounded-xl border border-[#ceb08f] bg-white px-3 py-2"
-                >
-                  <option value={3}>3x3</option>
-                  <option value={4}>4x4</option>
-                  <option value={5}>5x5</option>
-                </select>
+          {chatOpen ? (
+            <div className="mt-2 w-[300px] rounded-2xl border border-[#ccb18f] bg-[#f3e7d7] p-3 shadow-xl">
+              <div className="mb-2 flex gap-1">
+                {['😀', '🔥', '🎯', '👏', '😅'].map((emoji) => (
+                  <button key={emoji} onClick={() => void sendChat(emoji)} className="rounded-md border bg-[#efdcc5] px-2 py-1">
+                    {emoji}
+                  </button>
+                ))}
               </div>
-              <div>
-                <label className="text-xs uppercase tracking-[0.14em] text-[#78563a]">Win length</label>
-                <select
-                  value={winLength}
-                  onChange={(e) => setWinLength(Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-[#ceb08f] bg-white px-3 py-2"
-                >
-                  {[3, 4, 5].filter((v) => v <= boardSize).map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
+
+              <div className="max-h-52 space-y-1 overflow-auto rounded-lg border border-[#d2b89a] bg-[#f9f1e6] p-2 text-sm">
+                {chat.length === 0 ? <p className="text-[#77563b]">No messages yet</p> : null}
+                {chat
+                  .slice()
+                  .reverse()
+                  .map((msg) => (
+                    <div key={msg.id} className="rounded-md bg-[#efe0cc] px-2 py-1">
+                      <p className="text-xs font-semibold text-[#5c4028]">{msg.user_id}</p>
+                      <p>{msg.emoji ? `${msg.emoji} ` : ''}{msg.message || ''}</p>
+                    </div>
                   ))}
-                </select>
+              </div>
+
+              <div className="mt-2 flex gap-2">
+                <input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="Type message"
+                  className="flex-1 rounded-lg border border-[#ceb08f] bg-white px-2 py-1.5"
+                />
+                <button onClick={() => void sendChat()} className="rounded-lg bg-[#6d4c2e] px-3 py-1.5 text-[#fff4e7]">
+                  Send
+                </button>
               </div>
             </div>
           ) : null}
-
-          <div className="mt-4 flex gap-2">
-            <button
-              disabled={loading}
-              onClick={() => void (mode === 'offline' ? startOffline() : startOnline())}
-              className="rounded-xl bg-[#6d4c2e] px-4 py-2 text-sm font-semibold text-[#fff4e7] disabled:opacity-60"
-            >
-              {loading ? 'Please wait...' : mode === 'offline' ? 'Start Offline' : 'Find Match'}
-            </button>
-            <button
-              onClick={() => {
-                setMatch(null)
-                setChat([])
-                setStatus('Reset complete')
-              }}
-              className="rounded-xl border border-[#b89c78] bg-[#ecd8bf] px-4 py-2 text-sm"
-            >
-              Reset
-            </button>
-          </div>
-
-          <p className="mt-4 rounded-xl border border-[#c9ab86] bg-[#ecdbc6] px-3 py-2 text-sm text-[#5f4228]">{status}</p>
-        </aside>
-
-        <section className="rounded-3xl border border-[#ccb18f] bg-[#f2e6d7]/90 p-4 shadow-md sm:p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-xl font-semibold">Board</h2>
-            <p className="text-sm text-[#6b4d34]">{currentTurnLabel}</p>
-          </div>
-
-          {match ? (
-            <div
-              className="grid gap-2"
-              style={{
-                gridTemplateColumns: `repeat(${match.board_size}, minmax(0, 1fr))`,
-                maxWidth: 720,
-              }}
-            >
-              {match.board.flatMap((row, r) =>
-                row.map((cell, c) => (
-                  <button
-                    key={`${r}-${c}`}
-                    onClick={() => void makeMove(r, c)}
-                    className="aspect-square rounded-xl border border-[#bfa182] bg-[#f8f0e5] text-3xl font-bold text-[#4f3522] transition hover:bg-[#f4e9db]"
-                  >
-                    {cell || ''}
-                  </button>
-                )),
-              )}
-            </div>
-          ) : (
-            <p className="text-[#6f5038]">No active match yet.</p>
-          )}
-        </section>
-
-        <aside className="rounded-3xl border border-[#ccb18f] bg-[#f2e6d7]/90 p-4 shadow-md sm:p-5">
-          <h2 className="text-xl font-semibold">Chat & Emoji</h2>
-          <p className="mt-1 text-sm text-[#6f5038]">Available in online mode.</p>
-
-          <div className="mt-3 flex gap-2">
-            {['😀', '🔥', '🎯', '👏', '😅'].map((emoji) => (
-              <button
-                key={emoji}
-                onClick={() => void sendChat(emoji)}
-                className="rounded-lg border border-[#b89c78] bg-[#ecd8bf] px-2 py-1 text-lg"
-              >
-                {emoji}
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-3 flex gap-2">
-            <input
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              placeholder="Type message"
-              className="flex-1 rounded-xl border border-[#ceb08f] bg-[#f7efe3] px-3 py-2"
-            />
-            <button onClick={() => void sendChat()} className="rounded-xl bg-[#6d4c2e] px-3 py-2 text-[#fff4e7]">
-              Send
-            </button>
-          </div>
-
-          <div className="mt-4 max-h-[420px] space-y-2 overflow-auto pr-1">
-            {chat.length === 0 ? (
-              <p className="text-sm text-[#6f5038]">No chat yet.</p>
-            ) : (
-              chat
-                .slice()
-                .reverse()
-                .map((msg) => (
-                  <div key={msg.id} className="rounded-xl border border-[#d2b89a] bg-[#f7efe4] px-3 py-2 text-sm">
-                    <p className="font-medium text-[#553a24]">{msg.user_id}</p>
-                    <p>{msg.emoji ? `${msg.emoji} ` : ''}{msg.message || ''}</p>
-                  </div>
-                ))
-            )}
-          </div>
-        </aside>
-      </div>
+        </div>
+      ) : null}
     </div>
   )
 }
