@@ -2,7 +2,9 @@
 
 ## 2026-03-04
 - Initialized Go module and backend foundation.
-- Implemented first version of custom SQLite-based store with CRUD + event log.
-- Added in-memory event broker and WebSocket streaming support.
-- Added JWT auth controller and tenant-aware storage controller hooks.
-- Added backend README and initial database tests.
+- Implemented custom SQLite-based store with CRUD + event log + pub/sub.
+- Added JWT auth controller, tenant guard, and websocket streaming support.
+- Added RBAC action matrix for gateway authorization.
+- Added schema-validation DB controller and optimistic concurrency support (`If-Match`).
+- Split backend into containerized services: `gateway`, `controller`, and `db-engine`.
+- Added Dockerfile + `docker-compose.yml` for local orchestration.
