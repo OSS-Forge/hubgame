@@ -47,7 +47,7 @@ func (s *Server) Router() http.Handler {
 	mux.Handle("/v1/tiktoe/matchmaking/enqueue", s.auth.RequireAuth(http.HandlerFunc(s.tiktoeMatchmakingEnqueueHandler)))
 	mux.Handle("/v1/tiktoe/matchmaking/status", s.auth.RequireAuth(http.HandlerFunc(s.tiktoeMatchmakingStatusHandler)))
 
-	return withCORS(logging(mux))
+	return withCORS(withRequestDebug("server", mux))
 }
 
 func (s *Server) entitiesHandler(w http.ResponseWriter, r *http.Request) {

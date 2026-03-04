@@ -10,6 +10,7 @@ services:
       HUBGAME_JWT_SECRET: "dev-secret-change-me"
       HUBGAME_JWT_ISSUER: "hubgame-controller"
       HUBGAME_CONTROLLER_ADMIN_TOKEN: "dev-controller-admin"
+      HUBGAME_DEBUG: "true"
     ports:
       - "8082:8082"
 
@@ -23,6 +24,7 @@ services:
       HUBGAME_ADDR: ":8081"
       HUBGAME_SQLITE_DSN: "file:/data/hubgame.db?_pragma=busy_timeout(5000)"
       HUBGAME_INTERNAL_TOKEN: "dev-internal-token"
+      HUBGAME_DEBUG: "true"
     volumes:
       - db_data:/data
     ports:
@@ -41,6 +43,7 @@ services:
       HUBGAME_INTERNAL_TOKEN: "dev-internal-token"
       HUBGAME_CONTROLLER_ADMIN_TOKEN: "dev-controller-admin"
       HUBGAME_ENABLE_DEV_AUTH: "true"
+      HUBGAME_DEBUG: "true"
     depends_on:
       - controller
       - db-engine

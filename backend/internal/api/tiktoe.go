@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -151,6 +152,7 @@ func enqueueTiktoe(ctx context.Context, store *database.Store, tenantID string, 
 	boardSize, winLength := sanitizeBoard(req.BoardSize, req.WinLength)
 
 	queueID := tiktoeQueueID(req.UserID, boardSize, winLength)
+	debugf("tiktoe enqueue tenant=%s user=%s queue=%s board=%d win=%d", tenantID, req.UserID, queueID, boardSize, winLength)
 	ticket := matchmakingTicket{UserID: req.UserID, DisplayName: req.DisplayName, CreatedAt: time.Now().UTC()}
 	ticketData, _ := json.Marshal(ticket)
 	err := store.InsertEntity(ctx, &database.Entity{ID: queueID, TenantID: tenantID, Kind: tiktoeQueueKind, Data: ticketData})
@@ -177,6 +179,7 @@ func enqueueTiktoe(ctx context.Context, store *database.Store, tenantID string, 
 		}
 	}
 	if len(candidates) < 2 {
+		debugf("tiktoe queue waiting tenant=%s user=%s reason=insufficient_candidates candidates=%d", tenantID, req.UserID, len(candidates))
 		return map[string]any{"status": "queued", "queue_id": queueID, "waiting_for": "opponent"}, nil
 	}
 
@@ -192,6 +195,7 @@ func enqueueTiktoe(ctx context.Context, store *database.Store, tenantID string, 
 		}
 	}
 	if opponent == nil {
+		debugf("tiktoe queue waiting tenant=%s user=%s reason=no_distinct_username candidates=%d", tenantID, req.UserID, len(candidates))
 		return map[string]any{"status": "queued", "queue_id": queueID, "waiting_for": "distinct_username"}, nil
 	}
 
@@ -211,6 +215,7 @@ func enqueueTiktoe(ctx context.Context, store *database.Store, tenantID string, 
 	if err := store.UpdateEntity(ctx, &database.Entity{ID: match.ID, TenantID: tenantID, Data: updated}); err != nil {
 		return nil, err
 	}
+	debugf("tiktoe matched tenant=%s match=%s player_x=%s player_o=%s", tenantID, match.ID, match.PlayerX, match.PlayerO)
 	_ = store.DeleteEntity(ctx, tenantID, tiktoeQueueID(req.UserID, boardSize, winLength))
 	_ = store.DeleteEntity(ctx, tenantID, tiktoeQueueID(opponent.UserID, boardSize, winLength))
 
@@ -230,6 +235,7 @@ func tiktoeQueueStatus(ctx context.Context, store *database.Store, tenantID, use
 	queueID := tiktoeQueueID(userID, boardSize, winLength)
 	_, err := store.GetEntity(ctx, tenantID, queueID)
 	if err == nil {
+		debugf("tiktoe status tenant=%s user=%s status=queued queue=%s", tenantID, userID, queueID)
 		return map[string]any{"status": "queued"}, nil
 	}
 	if !errors.Is(err, database.ErrNotFound) {
@@ -246,9 +252,11 @@ func tiktoeQueueStatus(ctx context.Context, store *database.Store, tenantID, use
 			continue
 		}
 		if match.Mode == "online" && (match.PlayerX == userID || match.PlayerO == userID) {
+			debugf("tiktoe status tenant=%s user=%s status=matched match=%s", tenantID, userID, match.ID)
 			return map[string]any{"status": "matched", "match": match}, nil
 		}
 	}
+	debugf("tiktoe status tenant=%s user=%s status=idle", tenantID, userID)
 	return map[string]any{"status": "idle"}, nil
 }
 
@@ -397,7 +405,15 @@ func tiktoeDirectMatchID(userA, userB string, boardSize, winLength int) string {
 }
 
 func normalizePlayerID(v string) string {
-	return strings.TrimSpace(strings.ToLower(v))
+	id := strings.TrimSpace(strings.ToLower(v))
+	if id == "" {
+		return ""
+	}
+	if len(id) > 96 {
+		log.Printf("[debug] tiktoe normalize id truncated original_len=%d", len(id))
+		id = id[:96]
+	}
+	return id
 }
 
 func tiktoeChatEntityID(matchID, msgID string) string {

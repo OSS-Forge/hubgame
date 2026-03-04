@@ -55,7 +55,7 @@ func (g *GatewayServer) Router() http.Handler {
 	mux.Handle("/v1/entities", g.requireAuth(http.HandlerFunc(g.entitiesProxy)))
 	mux.Handle("/v1/entities/", g.requireAuth(http.HandlerFunc(g.entityByIDProxy)))
 	mux.Handle("/v1/events", g.requireAuth(http.HandlerFunc(g.eventsProxy)))
-	return withCORS(mux)
+	return withCORS(withRequestDebug("gateway", mux))
 }
 
 func (g *GatewayServer) devTokenHandler(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +106,7 @@ func (g *GatewayServer) requireAuth(next http.Handler) http.Handler {
 			authHeader := r.Header.Get("Authorization")
 			parts := strings.SplitN(authHeader, " ", 2)
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+				debugf("gateway auth failed path=%s reason=missing_bearer", r.URL.Path)
 				http.Error(w, "missing bearer token", http.StatusUnauthorized)
 				return
 			}
@@ -113,6 +114,7 @@ func (g *GatewayServer) requireAuth(next http.Handler) http.Handler {
 		}
 		claims, err := g.controller.VerifyToken(r.Context(), token)
 		if err != nil {
+			debugf("gateway auth failed path=%s reason=invalid_token err=%v", r.URL.Path, err)
 			http.Error(w, "invalid token", http.StatusUnauthorized)
 			return
 		}
@@ -283,6 +285,7 @@ func (g *GatewayServer) proxyHTTP(w http.ResponseWriter, r *http.Request, tenant
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
+	debugf("gateway proxy start method=%s path=%s tenant=%s target=%s", r.Method, r.URL.Path, tenantID, target)
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body)
 	if err != nil {
 		http.Error(w, "failed to build upstream request", http.StatusInternalServerError)
@@ -295,10 +298,12 @@ func (g *GatewayServer) proxyHTTP(w http.ResponseWriter, r *http.Request, tenant
 
 	resp, err := g.http.Do(req)
 	if err != nil {
+		debugf("gateway proxy upstream error method=%s path=%s tenant=%s err=%v", r.Method, r.URL.Path, tenantID, err)
 		http.Error(w, "db-engine unavailable", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
+	debugf("gateway proxy done method=%s path=%s tenant=%s status=%d", r.Method, r.URL.Path, tenantID, resp.StatusCode)
 
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)

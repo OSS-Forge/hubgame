@@ -37,7 +37,7 @@ func (s *DBEngineServer) Router() http.Handler {
 	mux.Handle("/v1/tiktoe/matches/", s.requireInternal(http.HandlerFunc(s.tiktoeMatchByIDHandler)))
 	mux.Handle("/v1/tiktoe/matchmaking/enqueue", s.requireInternal(http.HandlerFunc(s.tiktoeMatchmakingEnqueueHandler)))
 	mux.Handle("/v1/tiktoe/matchmaking/status", s.requireInternal(http.HandlerFunc(s.tiktoeMatchmakingStatusHandler)))
-	return withCORS(mux)
+	return withCORS(withRequestDebug("db-engine", mux))
 }
 
 func (s *DBEngineServer) requireInternal(next http.Handler) http.Handler {

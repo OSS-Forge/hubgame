@@ -31,6 +31,22 @@ docker compose up --build
 
 Public entrypoint: `http://localhost:8080`
 
+## Debug Logging
+Enable verbose backend traces with:
+```bash
+HUBGAME_DEBUG=true
+```
+
+When enabled, all services log:
+- inbound request method/path/status/latency
+- gateway proxy upstream calls and statuses
+- Tik-Toe matchmaking queue/match decisions
+
+Tail logs while testing matchmaking:
+```bash
+docker compose logs -f gateway db-engine controller
+```
+
 ## Seed Catalog (Versioned)
 Local Go command:
 ```bash
