@@ -1,0 +1,24 @@
+{
+  "id": "tik-toe",
+  "name": "Tik-Toe: Mod Arena",
+  "version": "0.1.0",
+  "author": "hubgame",
+  "inhouse": true,
+  "description": "Advanced tic-tac-toe with custom board sizes, bots, turn timers, and tactical modifiers.",
+  "entry": "index.html",
+  "categories": ["Strategy", "Board", "Puzzle"],
+  "modes": ["Solo", "Offline Multiplayer", "Bot Match"],
+  "supports": {
+    "online": false,
+    "offline": true,
+    "bots": true,
+    "modifiers": true,
+    "spectators": false
+  },
+  "cover": "assets/cover.svg",
+  "screenshots": [
+    "assets/screen-board.svg",
+    "assets/screen-modifiers.svg"
+  ],
+  "tags": ["tic-tac-toe", "modifiers", "bot", "board-game"]
+}

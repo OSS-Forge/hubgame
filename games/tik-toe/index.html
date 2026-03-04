@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tik-Toe: Mod Arena</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <aside class="panel setup">
+        <h1>Tik-Toe: Mod Arena</h1>
+        <p class="subtitle">Advanced tactical tic-tac-toe with modifiers and bots.</p>
+
+        <div class="group">
+          <label for="mode">Mode</label>
+          <select id="mode">
+            <option value="local">Local 2 Players</option>
+            <option value="bot" selected>Play vs Bot</option>
+          </select>
+        </div>
+
+        <div class="group row">
+          <div>
+            <label for="boardSize">Board Size</label>
+            <select id="boardSize">
+              <option value="3">3x3</option>
+              <option value="4">4x4</option>
+              <option value="5">5x5</option>
+            </select>
+          </div>
+          <div>
+            <label for="winLength">Win Length</label>
+            <select id="winLength">
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="group row">
+          <div>
+            <label for="botDifficulty">Bot</label>
+            <select id="botDifficulty">
+              <option value="easy">Easy</option>
+              <option value="medium" selected>Medium</option>
+              <option value="hard">Hard</option>
+            </select>
+          </div>
+          <div>
+            <label for="turnTimer">Timer (sec)</label>
+            <select id="turnTimer">
+              <option value="0">Off</option>
+              <option value="10">10</option>
+              <option value="15" selected>15</option>
+              <option value="30">30</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="startBtn" class="btn primary">Start Match</button>
+          <button id="restartBtn" class="btn">Restart Same Setup</button>
+        </div>
+
+        <div class="group">
+          <h2>Modifiers</h2>
+          <p class="hint">Each player gets one use per modifier.</p>
+          <ul class="legend">
+            <li><strong>Double Move:</strong> play two marks this turn</li>
+            <li><strong>Freeze Cell:</strong> block one cell for 2 turns</li>
+            <li><strong>Swap Symbols:</strong> swap X and O roles once</li>
+            <li><strong>Undo:</strong> undo the most recent move</li>
+          </ul>
+        </div>
+      </aside>
+
+      <section class="board-zone">
+        <header class="status-bar panel">
+          <div>
+            <p id="status">Press Start Match.</p>
+            <p id="turnMeta" class="meta">Round ready</p>
+          </div>
+          <div class="pill-wrap">
+            <span class="pill">Timer: <strong id="timerValue">--</strong></span>
+            <span class="pill">Moves: <strong id="moveCount">0</strong></span>
+          </div>
+        </header>
+
+        <div class="mod-row">
+          <div class="mod-panel panel">
+            <h3>Player X</h3>
+            <div id="modsX" class="mods"></div>
+          </div>
+          <div class="mod-panel panel">
+            <h3>Player O</h3>
+            <div id="modsO" class="mods"></div>
+          </div>
+        </div>
+
+        <div id="board" class="board panel" aria-label="Tik toe board"></div>
+      </section>
+
+      <aside class="panel logs">
+        <h2>Match Events</h2>
+        <ol id="eventLog"></ol>
+      </aside>
+    </main>
+
+    <script src="./game.js"></script>
+  </body>
+</html>
