@@ -8,3 +8,4 @@
 - Added sync script to export games into `web/public/games` plus `web/public/fallback-catalog.json`.
 - Rewrote `tik-toe` into React + Tailwind + Bun with simple-first UI and advanced settings toggle.
 - Added online mode support in game client (matchmaking, backend match sync, chat, emoji).
+- Upgraded online mode from polling to live websocket subscriptions for move/chat events.

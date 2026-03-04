@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 type Mode = 'offline' | 'online'
 type OfflineMode = 'local' | 'bot'
@@ -30,6 +30,8 @@ type ChatMessage = {
 const gatewayURL = import.meta.env.VITE_GATEWAY_URL ?? 'http://localhost:8080'
 
 export function App() {
+  const matchSocketRef = useRef<WebSocket | null>(null)
+  const chatSocketRef = useRef<WebSocket | null>(null)
   const [mode, setMode] = useState<Mode>('offline')
   const [offlineMode, setOfflineMode] = useState<OfflineMode>('bot')
   const [advanced, setAdvanced] = useState(false)
@@ -53,11 +55,11 @@ export function App() {
 
   useEffect(() => {
     if (!match || mode !== 'online' || !token) return
-    const matchTick = setInterval(() => void refreshMatch(match.id), 1500)
-    const chatTick = setInterval(() => void refreshChat(match.id), 1500)
+    connectRealtime(match.id, token)
+    void refreshMatch(match.id)
+    void refreshChat(match.id)
     return () => {
-      clearInterval(matchTick)
-      clearInterval(chatTick)
+      closeRealtime()
     }
   }, [match?.id, mode, token])
 
@@ -127,6 +129,7 @@ export function App() {
         if (payload.status === 'matched' && payload.match) {
           setMatch(payload.match)
           setChat([])
+          await refreshChat(payload.match.id)
           setStatus(`Matched! ${payload.match.player_x} vs ${payload.match.player_o}`)
           return
         }
@@ -219,9 +222,75 @@ export function App() {
         body: JSON.stringify({ user_id: myUserID, message, emoji: emoji || '' }),
       })
       setChatInput('')
-      await refreshChat(match.id)
     } catch (err) {
       setStatus(err instanceof Error ? err.message : 'Chat failed')
+    }
+  }
+
+  function connectRealtime(matchID: string, authToken: string) {
+    closeRealtime()
+
+    const wsBase = gatewayURL.replace(/^http/, 'ws')
+    const access = encodeURIComponent(authToken)
+
+    const matchSocket = new WebSocket(
+      `${wsBase}/v1/events/stream?topic=${encodeURIComponent(`tiktoe.match.${matchID}`)}&access_token=${access}`,
+    )
+    const chatSocket = new WebSocket(
+      `${wsBase}/v1/events/stream?topic=${encodeURIComponent(`tiktoe.match.${matchID}.chat`)}&access_token=${access}`,
+    )
+
+    matchSocket.onmessage = (event) => {
+      try {
+        const envelope = JSON.parse(event.data) as { type?: string; payload?: MatchState }
+        if (!envelope.payload) return
+        setMatch(envelope.payload)
+      } catch {
+        // ignore malformed events
+      }
+    }
+
+    chatSocket.onmessage = (event) => {
+      try {
+        const envelope = JSON.parse(event.data) as { payload?: ChatMessage }
+        if (!envelope.payload) return
+        setChat((prev) => {
+          if (prev.some((msg) => msg.id === envelope.payload?.id)) return prev
+          return [...prev, envelope.payload as ChatMessage]
+        })
+      } catch {
+        // ignore malformed events
+      }
+    }
+
+    const reconnect = () => {
+      if (mode !== 'online') return
+      setTimeout(() => {
+        if (match?.id === matchID && token === authToken) {
+          connectRealtime(matchID, authToken)
+          void refreshMatch(matchID)
+          void refreshChat(matchID)
+        }
+      }, 1200)
+    }
+
+    matchSocket.onclose = reconnect
+    chatSocket.onclose = reconnect
+
+    matchSocketRef.current = matchSocket
+    chatSocketRef.current = chatSocket
+  }
+
+  function closeRealtime() {
+    if (matchSocketRef.current) {
+      matchSocketRef.current.onclose = null
+      matchSocketRef.current.close()
+      matchSocketRef.current = null
+    }
+    if (chatSocketRef.current) {
+      chatSocketRef.current.onclose = null
+      chatSocketRef.current.close()
+      chatSocketRef.current = null
     }
   }
 
