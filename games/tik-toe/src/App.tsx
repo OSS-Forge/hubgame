@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
-import { ArrowLeft, Bot, MessageCircle, Play, SendHorizontal, Settings2, Sword, UserRound, Wifi, X, RotateCcw, Home, Users } from 'lucide-react'
+import { ArrowLeft, Bot, MessageCircle, Play, RefreshCw, SendHorizontal, Settings2, Sword, UserRound, Wifi, X, RotateCcw, Home, Users } from 'lucide-react'
 
 type Mode = 'offline' | 'online'
 type OfflineMode = 'local' | 'bot'
@@ -69,6 +69,7 @@ export function App() {
   const [playerSearch, setPlayerSearch] = useState('')
   const [discoverablePlayers, setDiscoverablePlayers] = useState<DiscoverablePlayer[]>([])
   const [presenceEnabled, setPresenceEnabled] = useState(true)
+  const [discoveryLoading, setDiscoveryLoading] = useState(false)
   const myUserID = useMemo(() => slugify(playerName) || 'player1', [playerName])
 
   useEffect(() => {
@@ -90,50 +91,50 @@ export function App() {
     return () => closeRealtime()
   }, [match?.id, mode, screen, token])
 
+  const syncPresence = useCallback(async () => {
+    if (screen !== 'setup' || mode !== 'online' || !presenceEnabled) {
+      setDiscoverablePlayers([])
+      return
+    }
+
+    setDiscoveryLoading(true)
+    try {
+      await ensureToken()
+      await callAuthed('/v1/tiktoe/presence', {
+        method: 'POST',
+        body: JSON.stringify({
+          user_id: myUserID,
+          display_name: playerName,
+          available: true,
+        }),
+      })
+      const res = await callAuthed(
+        `/v1/tiktoe/players?exclude_user_id=${encodeURIComponent(myUserID)}&q=${encodeURIComponent(playerSearch)}&limit=12`,
+        { method: 'GET' },
+      )
+      const payload = (await res.json()) as DiscoverablePlayer[]
+      setDiscoverablePlayers(payload)
+    } catch {
+      setDiscoverablePlayers([])
+    } finally {
+      setDiscoveryLoading(false)
+    }
+  }, [screen, mode, presenceEnabled, myUserID, playerName, playerSearch])
+
   useEffect(() => {
     if (screen !== 'setup' || mode !== 'online' || !presenceEnabled) {
       return
     }
 
-    let cancelled = false
-    let intervalID = 0
-
-    const syncPresence = async () => {
-      try {
-        await ensureToken()
-        await callAuthed('/v1/tiktoe/presence', {
-          method: 'POST',
-          body: JSON.stringify({
-            user_id: myUserID,
-            display_name: playerName,
-            available: true,
-          }),
-        })
-        const res = await callAuthed(
-          `/v1/tiktoe/players?exclude_user_id=${encodeURIComponent(myUserID)}&q=${encodeURIComponent(playerSearch)}&limit=12`,
-          { method: 'GET' },
-        )
-        const payload = (await res.json()) as DiscoverablePlayer[]
-        if (!cancelled) {
-          setDiscoverablePlayers(payload)
-        }
-      } catch {
-        if (!cancelled) {
-          setDiscoverablePlayers([])
-        }
-      }
-    }
-
     void syncPresence()
-    intervalID = window.setInterval(() => {
+    const intervalID = window.setInterval(() => {
       void syncPresence()
-    }, 10000)
+    }, 3000)
 
     return () => {
-      cancelled = true
       window.clearInterval(intervalID)
     }
-  }, [screen, mode, presenceEnabled, playerSearch, myUserID, playerName])
+  }, [screen, mode, presenceEnabled, syncPresence])
 
   useEffect(() => {
     if (match?.winner && match.winner !== 'draw') {
@@ -640,57 +641,6 @@ export function App() {
                     </div>
                   )}
 
-                  <div className="space-y-3 rounded-2xl border border-[#d2b89a] bg-[#f9f1e6] p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-[#5c4028]">Available Players</p>
-                        <p className="text-xs text-[#7b5f46]">See who is online and jump into a direct challenge.</p>
-                      </div>
-                      <button
-                        onClick={() => setPresenceEnabled((value) => !value)}
-                        className={`touch-target rounded-xl border px-3 py-2 text-xs font-semibold transition-smooth ${
-                          presenceEnabled
-                            ? 'border-[#6f5035] bg-[#6f5035] text-white'
-                            : 'border-[#d2b89a] bg-white text-[#6f5035]'
-                        }`}
-                      >
-                        {presenceEnabled ? 'Discovery On' : 'Discovery Off'}
-                      </button>
-                    </div>
-
-                    <input
-                      type="text"
-                      value={playerSearch}
-                      onChange={(e) => setPlayerSearch(e.target.value)}
-                      placeholder="Search players"
-                      className="input-elegant w-full"
-                    />
-
-                    <div className="max-h-60 space-y-2 overflow-auto">
-                      {presenceEnabled && discoverablePlayers.length === 0 ? (
-                        <p className="rounded-xl bg-white px-3 py-4 text-center text-sm text-[#7b5f46]">No available players right now.</p>
-                      ) : null}
-                      {!presenceEnabled ? (
-                        <p className="rounded-xl bg-white px-3 py-4 text-center text-sm text-[#7b5f46]">Turn discovery on to publish yourself and browse players.</p>
-                      ) : null}
-                      {discoverablePlayers.map((player) => (
-                        <button
-                          key={player.user_id}
-                          onClick={() => {
-                            setOnlineFlow('direct')
-                            setTargetUsername(player.user_id)
-                          }}
-                          className="flex w-full items-center justify-between rounded-2xl border border-[#d9c2a7] bg-white px-4 py-3 text-left transition-smooth hover:border-[#6f5035] hover:bg-[#fdf9f2]"
-                        >
-                          <div>
-                            <p className="text-sm font-semibold text-[#5c4028]">{player.display_name}</p>
-                            <p className="text-xs text-[#7b5f46]">@{player.user_id}</p>
-                          </div>
-                          <span className="rounded-xl bg-[#efe0cc] px-3 py-2 text-xs font-semibold text-[#6f5035]">Challenge</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
                 </>
               ) : null}
 
@@ -707,6 +657,73 @@ export function App() {
 
               {advanced ? (
                 <div className="animate-fade-in space-y-4 rounded-2xl border border-[#d2b89a] bg-[#f9f1e6] p-4">
+                  {mode === 'online' ? (
+                    <div className="space-y-3 rounded-2xl border border-[#dcc8af] bg-white/80 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-[#5c4028]">Player Discovery</p>
+                          <p className="text-xs text-[#7b5f46]">Search available players and fill direct challenge automatically.</p>
+                        </div>
+                        <button
+                          onClick={() => setPresenceEnabled((value) => !value)}
+                          className={`touch-target rounded-xl border px-3 py-2 text-xs font-semibold transition-smooth ${
+                            presenceEnabled
+                              ? 'border-[#6f5035] bg-[#6f5035] text-white'
+                              : 'border-[#d2b89a] bg-white text-[#6f5035]'
+                          }`}
+                        >
+                          {presenceEnabled ? 'On' : 'Off'}
+                        </button>
+                      </div>
+
+                      {presenceEnabled ? (
+                        <>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={playerSearch}
+                              onChange={(e) => setPlayerSearch(e.target.value)}
+                              placeholder="Search players"
+                              className="input-elegant w-full"
+                            />
+                            <button
+                              onClick={() => void syncPresence()}
+                              className="touch-target inline-flex items-center justify-center rounded-xl border border-[#d2b89a] bg-white px-3 py-2 text-[#6f5035] hover:bg-[#f9f1e6]"
+                            >
+                              <RefreshCw size={16} className={discoveryLoading ? 'animate-spin-slow' : ''} />
+                            </button>
+                          </div>
+
+                          <div className="max-h-56 space-y-2 overflow-auto">
+                            {discoverablePlayers.length === 0 ? (
+                              <p className="rounded-xl bg-[#f9f1e6] px-3 py-4 text-center text-sm text-[#7b5f46]">
+                                {discoveryLoading ? 'Searching players...' : 'No available players right now.'}
+                              </p>
+                            ) : null}
+                            {discoverablePlayers.map((player) => (
+                              <button
+                                key={player.user_id}
+                                onClick={() => {
+                                  setOnlineFlow('direct')
+                                  setTargetUsername(player.user_id)
+                                }}
+                                className="flex w-full items-center justify-between rounded-2xl border border-[#d9c2a7] bg-[#fcfaf6] px-4 py-3 text-left transition-smooth hover:border-[#6f5035] hover:bg-[#fdf9f2]"
+                              >
+                                <div>
+                                  <p className="text-sm font-semibold text-[#5c4028]">{player.display_name}</p>
+                                  <p className="text-xs text-[#7b5f46]">@{player.user_id}</p>
+                                </div>
+                                <span className="rounded-xl bg-[#efe0cc] px-3 py-2 text-xs font-semibold text-[#6f5035]">Use</span>
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <p className="text-sm text-[#7b5f46]">Discovery is off. Turn it on to publish yourself and search online players.</p>
+                      )}
+                    </div>
+                  ) : null}
+
                   <div>
                     <label className="mb-2 block text-sm font-semibold text-[#5c4028]">
                       Board Size: {boardSize}x{boardSize}

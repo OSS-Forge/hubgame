@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-03T17:35:39.265Z",
+  "generatedAt": "2026-04-03T17:46:41.340Z",
   "count": 1,
   "games": [
     {
@@ -28,7 +28,7 @@
       "cover": "assets/cover.svg",
       "entry": "tik-toe/dist/index.html",
       "manifest": "games/tik-toe/manifest.json",
-      "publishedAt": "2026-04-03T17:35:39.265Z"
+      "publishedAt": "2026-04-03T17:46:41.340Z"
     }
   ]
 }
