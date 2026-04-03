@@ -46,6 +46,8 @@ func (s *Server) Router() http.Handler {
 	mux.Handle("/v1/tiktoe/matches/", s.auth.RequireAuth(http.HandlerFunc(s.tiktoeMatchByIDHandler)))
 	mux.Handle("/v1/tiktoe/matchmaking/enqueue", s.auth.RequireAuth(http.HandlerFunc(s.tiktoeMatchmakingEnqueueHandler)))
 	mux.Handle("/v1/tiktoe/matchmaking/status", s.auth.RequireAuth(http.HandlerFunc(s.tiktoeMatchmakingStatusHandler)))
+	mux.Handle("/v1/tiktoe/presence", s.auth.RequireAuth(http.HandlerFunc(s.tiktoePresenceHandler)))
+	mux.Handle("/v1/tiktoe/players", s.auth.RequireAuth(http.HandlerFunc(s.tiktoePlayersHandler)))
 
 	return withCORS(withRequestDebug("server", mux))
 }
@@ -454,6 +456,55 @@ func (s *Server) tiktoeMatchmakingStatusHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) tiktoePresenceHandler(w http.ResponseWriter, r *http.Request) {
+	claims, _ := controller.ClaimsFromContext(r.Context())
+	if err := s.authorizer.Enforce(claims, controller.ActionEntityWrite); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req presenceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	presence, err := upsertTiktoePresence(withClaimsForStorage(r.Context(), claims), s.store, claims.TenantID, req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, presence)
+}
+
+func (s *Server) tiktoePlayersHandler(w http.ResponseWriter, r *http.Request) {
+	claims, _ := controller.ClaimsFromContext(r.Context())
+	if err := s.authorizer.Enforce(claims, controller.ActionEntityRead); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := listTiktoePresence(
+		withClaimsForStorage(r.Context(), claims),
+		s.store,
+		claims.TenantID,
+		r.URL.Query().Get("exclude_user_id"),
+		r.URL.Query().Get("q"),
+		limit,
+	)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 func logging(next http.Handler) http.Handler {

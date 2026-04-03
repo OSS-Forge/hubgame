@@ -14,9 +14,11 @@ import (
 )
 
 const (
-	tiktoeMatchKind = "tiktoe_match"
-	tiktoeQueueKind = "tiktoe_queue"
-	tiktoeChatKind  = "tiktoe_chat"
+	tiktoeMatchKind    = "tiktoe_match"
+	tiktoeQueueKind    = "tiktoe_queue"
+	tiktoeChatKind     = "tiktoe_chat"
+	tiktoePresenceKind = "tiktoe_presence"
+	tiktoePresenceTTL  = 45 * time.Second
 )
 
 type tiktoeState struct {
@@ -75,6 +77,19 @@ type chatRequest struct {
 	UserID  string `json:"user_id"`
 	Message string `json:"message"`
 	Emoji   string `json:"emoji"`
+}
+
+type presenceRequest struct {
+	UserID      string `json:"user_id"`
+	DisplayName string `json:"display_name"`
+	Available   bool   `json:"available"`
+}
+
+type playerPresence struct {
+	UserID      string    `json:"user_id"`
+	DisplayName string    `json:"display_name"`
+	Available   bool      `json:"available"`
+	LastSeenAt  time.Time `json:"last_seen_at"`
 }
 
 func createTiktoeMatch(ctx context.Context, store *database.Store, tenantID string, req createMatchRequest) (*tiktoeState, error) {
@@ -260,6 +275,91 @@ func tiktoeQueueStatus(ctx context.Context, store *database.Store, tenantID, use
 	return map[string]any{"status": "idle"}, nil
 }
 
+func upsertTiktoePresence(ctx context.Context, store *database.Store, tenantID string, req presenceRequest) (*playerPresence, error) {
+	req.UserID = normalizePlayerID(req.UserID)
+	if req.UserID == "" {
+		return nil, errors.New("user_id is required")
+	}
+	if strings.TrimSpace(req.DisplayName) == "" {
+		req.DisplayName = req.UserID
+	}
+
+	presence := &playerPresence{
+		UserID:      req.UserID,
+		DisplayName: strings.TrimSpace(req.DisplayName),
+		Available:   req.Available,
+		LastSeenAt:  time.Now().UTC(),
+	}
+	data, _ := json.Marshal(presence)
+	entity := &database.Entity{
+		ID:       tiktoePresenceID(req.UserID),
+		TenantID: tenantID,
+		Kind:     tiktoePresenceKind,
+		Data:     data,
+	}
+
+	if err := store.InsertEntity(ctx, entity); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			if restoreErr := store.RestoreEntity(ctx, entity); restoreErr == nil {
+				debugf("tiktoe presence restored tenant=%s user=%s available=%t", tenantID, req.UserID, req.Available)
+				return presence, nil
+			}
+			if updateErr := store.UpdateEntity(ctx, entity); updateErr == nil {
+				debugf("tiktoe presence updated tenant=%s user=%s available=%t", tenantID, req.UserID, req.Available)
+				return presence, nil
+			}
+		}
+		return nil, err
+	}
+	debugf("tiktoe presence inserted tenant=%s user=%s available=%t", tenantID, req.UserID, req.Available)
+	return presence, nil
+}
+
+func listTiktoePresence(ctx context.Context, store *database.Store, tenantID, excludeUserID, query string, limit int) ([]playerPresence, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 24
+	}
+	excludeUserID = normalizePlayerID(excludeUserID)
+	query = strings.TrimSpace(strings.ToLower(query))
+
+	entities, err := store.ListEntities(ctx, tenantID, tiktoePresenceKind, 5000)
+	if err != nil {
+		return nil, err
+	}
+
+	cutoff := time.Now().UTC().Add(-tiktoePresenceTTL)
+	out := make([]playerPresence, 0, limit)
+	for _, entity := range entities {
+		var presence playerPresence
+		if json.Unmarshal(entity.Data, &presence) != nil {
+			continue
+		}
+		presence.UserID = normalizePlayerID(presence.UserID)
+		if presence.UserID == "" || presence.UserID == excludeUserID {
+			continue
+		}
+		if !presence.Available || presence.LastSeenAt.Before(cutoff) {
+			continue
+		}
+		if query != "" {
+			name := strings.ToLower(strings.TrimSpace(presence.DisplayName))
+			if !strings.Contains(name, query) && !strings.Contains(presence.UserID, query) {
+				continue
+			}
+		}
+		out = append(out, presence)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].LastSeenAt.After(out[j].LastSeenAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	debugf("tiktoe presence list tenant=%s exclude=%s query=%q count=%d", tenantID, excludeUserID, query, len(out))
+	return out, nil
+}
+
 func loadTiktoeMatch(ctx context.Context, store *database.Store, tenantID, matchID string) (*tiktoeState, error) {
 	entity, err := store.GetEntity(ctx, tenantID, matchID)
 	if err != nil {
@@ -418,6 +518,10 @@ func normalizePlayerID(v string) string {
 
 func tiktoeChatEntityID(matchID, msgID string) string {
 	return "chat:" + strings.TrimSpace(matchID) + ":" + strings.TrimSpace(msgID)
+}
+
+func tiktoePresenceID(userID string) string {
+	return "presence:" + normalizePlayerID(userID)
 }
 
 func sanitizeBoard(size, win int) (int, int) {

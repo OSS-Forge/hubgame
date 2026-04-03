@@ -37,6 +37,8 @@ func (s *DBEngineServer) Router() http.Handler {
 	mux.Handle("/v1/tiktoe/matches/", s.requireInternal(http.HandlerFunc(s.tiktoeMatchByIDHandler)))
 	mux.Handle("/v1/tiktoe/matchmaking/enqueue", s.requireInternal(http.HandlerFunc(s.tiktoeMatchmakingEnqueueHandler)))
 	mux.Handle("/v1/tiktoe/matchmaking/status", s.requireInternal(http.HandlerFunc(s.tiktoeMatchmakingStatusHandler)))
+	mux.Handle("/v1/tiktoe/presence", s.requireInternal(http.HandlerFunc(s.tiktoePresenceHandler)))
+	mux.Handle("/v1/tiktoe/players", s.requireInternal(http.HandlerFunc(s.tiktoePlayersHandler)))
 	return withCORS(withRequestDebug("db-engine", mux))
 }
 
@@ -431,4 +433,46 @@ func (s *DBEngineServer) tiktoeMatchmakingStatusHandler(w http.ResponseWriter, r
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *DBEngineServer) tiktoePresenceHandler(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := s.tenantID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req presenceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	presence, err := upsertTiktoePresence(r.Context(), s.store, tenantID, req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, presence)
+}
+
+func (s *DBEngineServer) tiktoePlayersHandler(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := s.tenantID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := listTiktoePresence(r.Context(), s.store, tenantID, r.URL.Query().Get("exclude_user_id"), r.URL.Query().Get("q"), limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
 }

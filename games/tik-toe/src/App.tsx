@@ -20,14 +20,20 @@ type MatchState = {
 }
 
 type ChatMessage = {
-  id: string
-  user_id: string
-  message?: string
-  emoji?: string
-  type: string
+ id: string
+ user_id: string
+ message?: string
+ emoji?: string
+ type: string
 }
 
 type WinningLine = [number, number][]
+type DiscoverablePlayer = {
+  user_id: string
+  display_name: string
+  available: boolean
+  last_seen_at: string
+}
 
 const TOKEN_STORAGE_KEY = 'hubgame.dev.token'
 const gatewayURL = resolveGatewayHTTPBase(import.meta.env.VITE_GATEWAY_URL)
@@ -60,6 +66,9 @@ export function App() {
   const [chat, setChat] = useState<ChatMessage[]>([])
   const [winningLine, setWinningLine] = useState<WinningLine>([])
   const [lastMove, setLastMove] = useState<[number, number] | null>(null)
+  const [playerSearch, setPlayerSearch] = useState('')
+  const [discoverablePlayers, setDiscoverablePlayers] = useState<DiscoverablePlayer[]>([])
+  const [presenceEnabled, setPresenceEnabled] = useState(true)
   const myUserID = useMemo(() => slugify(playerName) || 'player1', [playerName])
 
   useEffect(() => {
@@ -80,6 +89,51 @@ export function App() {
     void refreshChat(match.id)
     return () => closeRealtime()
   }, [match?.id, mode, screen, token])
+
+  useEffect(() => {
+    if (screen !== 'setup' || mode !== 'online' || !presenceEnabled) {
+      return
+    }
+
+    let cancelled = false
+    let intervalID = 0
+
+    const syncPresence = async () => {
+      try {
+        await ensureToken()
+        await callAuthed('/v1/tiktoe/presence', {
+          method: 'POST',
+          body: JSON.stringify({
+            user_id: myUserID,
+            display_name: playerName,
+            available: true,
+          }),
+        })
+        const res = await callAuthed(
+          `/v1/tiktoe/players?exclude_user_id=${encodeURIComponent(myUserID)}&q=${encodeURIComponent(playerSearch)}&limit=12`,
+          { method: 'GET' },
+        )
+        const payload = (await res.json()) as DiscoverablePlayer[]
+        if (!cancelled) {
+          setDiscoverablePlayers(payload)
+        }
+      } catch {
+        if (!cancelled) {
+          setDiscoverablePlayers([])
+        }
+      }
+    }
+
+    void syncPresence()
+    intervalID = window.setInterval(() => {
+      void syncPresence()
+    }, 10000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalID)
+    }
+  }, [screen, mode, presenceEnabled, playerSearch, myUserID, playerName])
 
   useEffect(() => {
     if (match?.winner && match.winner !== 'draw') {
@@ -585,6 +639,58 @@ export function App() {
                       />
                     </div>
                   )}
+
+                  <div className="space-y-3 rounded-2xl border border-[#d2b89a] bg-[#f9f1e6] p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-[#5c4028]">Available Players</p>
+                        <p className="text-xs text-[#7b5f46]">See who is online and jump into a direct challenge.</p>
+                      </div>
+                      <button
+                        onClick={() => setPresenceEnabled((value) => !value)}
+                        className={`touch-target rounded-xl border px-3 py-2 text-xs font-semibold transition-smooth ${
+                          presenceEnabled
+                            ? 'border-[#6f5035] bg-[#6f5035] text-white'
+                            : 'border-[#d2b89a] bg-white text-[#6f5035]'
+                        }`}
+                      >
+                        {presenceEnabled ? 'Discovery On' : 'Discovery Off'}
+                      </button>
+                    </div>
+
+                    <input
+                      type="text"
+                      value={playerSearch}
+                      onChange={(e) => setPlayerSearch(e.target.value)}
+                      placeholder="Search players"
+                      className="input-elegant w-full"
+                    />
+
+                    <div className="max-h-60 space-y-2 overflow-auto">
+                      {presenceEnabled && discoverablePlayers.length === 0 ? (
+                        <p className="rounded-xl bg-white px-3 py-4 text-center text-sm text-[#7b5f46]">No available players right now.</p>
+                      ) : null}
+                      {!presenceEnabled ? (
+                        <p className="rounded-xl bg-white px-3 py-4 text-center text-sm text-[#7b5f46]">Turn discovery on to publish yourself and browse players.</p>
+                      ) : null}
+                      {discoverablePlayers.map((player) => (
+                        <button
+                          key={player.user_id}
+                          onClick={() => {
+                            setOnlineFlow('direct')
+                            setTargetUsername(player.user_id)
+                          }}
+                          className="flex w-full items-center justify-between rounded-2xl border border-[#d9c2a7] bg-white px-4 py-3 text-left transition-smooth hover:border-[#6f5035] hover:bg-[#fdf9f2]"
+                        >
+                          <div>
+                            <p className="text-sm font-semibold text-[#5c4028]">{player.display_name}</p>
+                            <p className="text-xs text-[#7b5f46]">@{player.user_id}</p>
+                          </div>
+                          <span className="rounded-xl bg-[#efe0cc] px-3 py-2 text-xs font-semibold text-[#6f5035]">Challenge</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </>
               ) : null}
 

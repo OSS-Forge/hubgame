@@ -51,6 +51,8 @@ func (g *GatewayServer) Router() http.Handler {
 	mux.Handle("/v1/tiktoe/matches/", g.requireAuth(http.HandlerFunc(g.tiktoeMatchByIDHandler)))
 	mux.Handle("/v1/tiktoe/matchmaking/enqueue", g.requireAuth(http.HandlerFunc(g.tiktoeMatchmakingEnqueueHandler)))
 	mux.Handle("/v1/tiktoe/matchmaking/status", g.requireAuth(http.HandlerFunc(g.tiktoeMatchmakingStatusHandler)))
+	mux.Handle("/v1/tiktoe/presence", g.requireAuth(http.HandlerFunc(g.tiktoePresenceHandler)))
+	mux.Handle("/v1/tiktoe/players", g.requireAuth(http.HandlerFunc(g.tiktoePlayersHandler)))
 	mux.Handle("/v1/events/stream", g.requireAuth(g.requireAction(controller.ActionStreamRead, http.HandlerFunc(g.streamProxy))))
 	mux.Handle("/v1/entities", g.requireAuth(http.HandlerFunc(g.entitiesProxy)))
 	mux.Handle("/v1/entities/", g.requireAuth(http.HandlerFunc(g.entityByIDProxy)))
@@ -272,6 +274,24 @@ func (g *GatewayServer) tiktoeMatchmakingEnqueueHandler(w http.ResponseWriter, r
 }
 
 func (g *GatewayServer) tiktoeMatchmakingStatusHandler(w http.ResponseWriter, r *http.Request) {
+	claims, _ := gatewayClaimsFromContext(r.Context())
+	if err := g.authorizer.Enforce(claims, controller.ActionEntityRead); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	g.proxyHTTP(w, r, claims.TenantID)
+}
+
+func (g *GatewayServer) tiktoePresenceHandler(w http.ResponseWriter, r *http.Request) {
+	claims, _ := gatewayClaimsFromContext(r.Context())
+	if err := g.authorizer.Enforce(claims, controller.ActionEntityWrite); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	g.proxyHTTP(w, r, claims.TenantID)
+}
+
+func (g *GatewayServer) tiktoePlayersHandler(w http.ResponseWriter, r *http.Request) {
 	claims, _ := gatewayClaimsFromContext(r.Context())
 	if err := g.authorizer.Enforce(claims, controller.ActionEntityRead); err != nil {
 		http.Error(w, err.Error(), http.StatusForbidden)

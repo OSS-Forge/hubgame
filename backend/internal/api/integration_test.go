@@ -432,6 +432,45 @@ func TestGatewayIntegrationTiktoeMatchmakingReenqueueAfterMatch(t *testing.T) {
 	}
 }
 
+func TestGatewayIntegrationTiktoePresenceListing(t *testing.T) {
+	controllerSrv, _, gatewaySrv, cleanup := setupIntegrationStack(t)
+	defer cleanup()
+
+	devToken := issueToken(t, controllerSrv.URL, adminToken, "dev-1", "t-1", "developer")
+
+	for _, payload := range []map[string]any{
+		{"user_id": "ada", "display_name": "Ada", "available": true},
+		{"user_id": "grace", "display_name": "Grace", "available": true},
+		{"user_id": "linus", "display_name": "Linus", "available": false},
+	} {
+		resp := requestJSON(t, http.MethodPost, gatewaySrv.URL+"/v1/tiktoe/presence", devToken, payload, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 presence upsert, got %d", resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+
+	listResp := requestJSON(t, http.MethodGet, gatewaySrv.URL+"/v1/tiktoe/players?exclude_user_id=ada&q=gr&limit=10", devToken, nil, nil)
+	if listResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 player list, got %d", listResp.StatusCode)
+	}
+	var players []struct {
+		UserID      string `json:"user_id"`
+		DisplayName string `json:"display_name"`
+		Available   bool   `json:"available"`
+	}
+	if err := json.NewDecoder(listResp.Body).Decode(&players); err != nil {
+		t.Fatalf("decode player list: %v", err)
+	}
+	listResp.Body.Close()
+	if len(players) != 1 {
+		t.Fatalf("expected 1 discoverable player, got %d", len(players))
+	}
+	if players[0].UserID != "grace" {
+		t.Fatalf("expected grace in player list, got %q", players[0].UserID)
+	}
+}
+
 func TestGatewayIntegrationTiktoeDirectUsernameMatch(t *testing.T) {
 	controllerSrv, _, gatewaySrv, cleanup := setupIntegrationStack(t)
 	defer cleanup()
