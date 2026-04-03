@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Bot, MessageCircle, Play, SendHorizontal, Settings2, Sword, UserRound, Wifi, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { ArrowLeft, Bot, MessageCircle, Play, SendHorizontal, Settings2, Sword, UserRound, Wifi, X, RotateCcw, Home, Users } from 'lucide-react'
 
 type Mode = 'offline' | 'online'
 type OfflineMode = 'local' | 'bot'
@@ -25,6 +25,8 @@ type ChatMessage = {
   emoji?: string
   type: string
 }
+
+type WinningLine = [number, number][]
 
 const TOKEN_STORAGE_KEY = 'hubgame.dev.token'
 const gatewayURL = resolveGatewayHTTPBase(import.meta.env.VITE_GATEWAY_URL)
@@ -54,7 +56,8 @@ export function App() {
   const [chatOpen, setChatOpen] = useState(false)
   const [chatInput, setChatInput] = useState('')
   const [chat, setChat] = useState<ChatMessage[]>([])
-
+  const [winningLine, setWinningLine] = useState<WinningLine>([])
+  const [lastMove, setLastMove] = useState<[number, number] | null>(null)
   const myUserID = useMemo(() => slugify(playerName) || 'player1', [playerName])
 
   useEffect(() => {
@@ -75,6 +78,15 @@ export function App() {
     void refreshChat(match.id)
     return () => closeRealtime()
   }, [match?.id, mode, screen, token])
+
+  useEffect(() => {
+    if (match?.winner && match.winner !== 'draw') {
+      const line = findWinningLine(match.board, match.win_length, match.winner)
+      setWinningLine(line)
+    } else {
+      setWinningLine([])
+    }
+  }, [match?.winner, match?.board, match?.win_length])
 
   async function ensureToken(forceRefresh = false) {
     if (!forceRefresh && token) return token
@@ -136,6 +148,8 @@ export function App() {
         setScreen('play')
         setChat([])
         setStatus('Your turn')
+        setLastMove(null)
+        setWinningLine([])
         return
       }
 
@@ -158,6 +172,8 @@ export function App() {
         setChat([])
         setScreen('play')
         setStatus('Match ready')
+        setLastMove(null)
+        setWinningLine([])
         return
       }
 
@@ -183,6 +199,8 @@ export function App() {
           setChat([])
           setScreen('play')
           setStatus('Match found')
+          setLastMove(null)
+          setWinningLine([])
           return
         }
         await sleep(1000)
@@ -196,12 +214,15 @@ export function App() {
   }
 
   async function playCell(row: number, col: number) {
-    if (!match || match.winner) return
+    if (!match || match.winner || loading) return
+    if (match.board[row][col] !== '') return
+    if (mode === 'offline' && match.current !== 'X') return
+
+    setLoading(true)
+    setLastMove([row, col])
 
     if (mode === 'offline') {
       const next = structuredClone(match)
-      if (next.board[row][col]) return
-
       next.board[row][col] = next.current
       next.move_count += 1
       const winner = checkWinner(next.board, next.win_length)
@@ -209,6 +230,8 @@ export function App() {
       if (winner) {
         next.winner = winner
         setStatus(`Winner: ${winner}`)
+        const line = findWinningLine(next.board, next.win_length, winner)
+        setWinningLine(line)
       } else if (isBoardFull(next.board)) {
         next.winner = 'draw'
         setStatus('Draw')
@@ -217,14 +240,18 @@ export function App() {
         setStatus(next.current === 'X' ? 'Your turn' : 'Opponent turn')
 
         if (offlineMode === 'bot' && next.current === 'O') {
+          await sleep(300)
           const bot = findBotMove(next.board)
           if (bot) {
             next.board[bot.row][bot.col] = 'O'
             next.move_count += 1
+            setLastMove([bot.row, bot.col])
             const botWinner = checkWinner(next.board, next.win_length)
             if (botWinner) {
               next.winner = botWinner
               setStatus(`Winner: ${botWinner}`)
+              const line = findWinningLine(next.board, next.win_length, botWinner)
+              setWinningLine(line)
             } else if (isBoardFull(next.board)) {
               next.winner = 'draw'
               setStatus('Draw')
@@ -237,6 +264,7 @@ export function App() {
       }
 
       setMatch(next)
+      setLoading(false)
       return
     }
 
@@ -249,11 +277,18 @@ export function App() {
       setMatch(payload)
       if (payload.winner) {
         setStatus(payload.winner === 'draw' ? 'Draw' : `Winner: ${payload.winner}`)
+        if (payload.winner !== 'draw') {
+          const line = findWinningLine(payload.board, payload.win_length, payload.winner)
+          setWinningLine(line)
+        }
       } else {
         setStatus(payload.current === 'X' ? 'X turn' : 'O turn')
       }
     } catch (err) {
       setStatus(err instanceof Error ? err.message : 'Move failed')
+      setLastMove(null)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -269,14 +304,14 @@ export function App() {
     setChat(payload)
   }
 
-  async function sendChat(emoji?: string) {
+  async function sendChat() {
     if (!match || mode !== 'online') return
     const message = chatInput.trim()
-    if (!message && !emoji) return
+    if (!message) return
     try {
       await callAuthed(`/v1/tiktoe/matches/${match.id}/chat`, {
         method: 'POST',
-        body: JSON.stringify({ user_id: myUserID, message, emoji: emoji || '' }),
+        body: JSON.stringify({ user_id: myUserID, message, emoji: '' }),
       })
       setChatInput('')
     } catch (err) {
@@ -358,266 +393,463 @@ export function App() {
     setStatus('Choose a mode to begin')
   }
 
+  function resetGame() {
+    if (!match) return
+    const reset: MatchState = {
+      ...match,
+      board: createBoard(match.board_size),
+      current: 'X',
+      winner: '',
+      move_count: 0,
+    }
+    setMatch(reset)
+    setLastMove(null)
+    setWinningLine([])
+    setStatus('Your turn')
+  }
+
+  const isCellDisabled = useCallback((row: number, col: number) => {
+    if (!match || match.winner || loading) return true
+    if (match.board[row][col] !== '') return true
+    if (mode === 'offline' && match.current !== 'X') return true
+    return false
+  }, [match, loading, mode])
+
   return (
-    <div className="min-h-screen px-4 py-6 text-[#3f2d1f] sm:px-6">
-      <div className="mx-auto max-w-4xl">
+    <div className="min-h-screen px-4 py-6 text-[#3f2d1f] sm:px-6 safe-top safe-bottom">
+      <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-5xl items-center justify-center">
+        {/* Mode Selection Screen */}
         {screen === 'choose' ? (
-          <section className="rounded-3xl border border-[#ccb18f] bg-[#f2e6d7]/90 p-6 text-center shadow-md sm:p-10">
-            <h1 className="text-3xl font-semibold sm:text-4xl">Tik-Toe</h1>
-            <p className="mt-2 text-sm text-[#6f5038]">Choose mode</p>
-            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+          <section className="card-elegant w-full max-w-2xl p-6 text-center screen-enter sm:p-10">
+            <h1 className="text-3xl font-bold tracking-tight text-[#6f5035] sm:text-4xl">Tik-Toe</h1>
+            <p className="mt-2 text-sm text-[#6f5038]">Choose how you want to play.</p>
+
+            <div className="mx-auto mt-8 grid max-w-xl gap-4 sm:grid-cols-2">
               <button
                 onClick={() => goToSetup('offline')}
-                className="flex items-center justify-center gap-2 rounded-2xl border border-[#b89c78] bg-[#ead4ba] px-4 py-4 text-lg font-semibold hover:bg-[#e1c7a8]"
+                className="mode-card touch-target flex aspect-square flex-col items-center justify-center gap-4 rounded-3xl p-6 text-lg font-semibold"
               >
-                <Bot size={18} />
+                <Bot size={30} />
                 Offline
               </button>
               <button
                 onClick={() => goToSetup('online')}
-                className="flex items-center justify-center gap-2 rounded-2xl border border-[#7f5e3d] bg-[#7f5e3d] px-4 py-4 text-lg font-semibold text-[#fff4e7] hover:bg-[#6f5035]"
+                className="mode-card mode-card-primary touch-target flex aspect-square flex-col items-center justify-center gap-4 rounded-3xl p-6 text-lg font-semibold"
               >
-                <Wifi size={18} />
+                <Wifi size={30} />
                 Online
               </button>
             </div>
           </section>
         ) : null}
 
+        {/* Setup Screen */}
         {screen === 'setup' ? (
-          <section className="rounded-3xl border border-[#ccb18f] bg-[#f2e6d7]/90 p-5 shadow-md sm:p-6">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="text-2xl font-semibold">{mode === 'online' ? 'Online Setup' : 'Offline Setup'}</h2>
+          <section className="card-elegant w-full max-w-2xl p-6 screen-enter sm:p-8">
+            <div className="mb-6 grid grid-cols-[auto_1fr_auto] items-center gap-3">
               <button
                 onClick={() => setScreen('choose')}
-                className="inline-flex items-center gap-1 rounded-full border border-[#b89c78] bg-[#ecd8bf] px-3 py-1 text-sm"
+                className="touch-target inline-flex items-center gap-2 rounded-xl border border-[#d2b89a] bg-white px-4 py-2.5 text-sm font-semibold text-[#6f5035] hover:bg-[#f9f1e6] press-scale"
               >
-                <ArrowLeft size={14} />
+                <ArrowLeft size={18} />
                 Back
               </button>
+              <h2 className="text-xl font-bold text-[#6f5035]">
+                {mode === 'online' ? 'Online Match' : 'Offline Game'}
+              </h2>
+              <div />
             </div>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="space-y-6">
+              {/* Player Name */}
               <div>
-                <label className="text-xs uppercase tracking-[0.14em] text-[#78563a]">Your username</label>
+                <label className="mb-2 block text-sm font-semibold text-[#5c4028]">Your Name</label>
                 <input
+                  type="text"
                   value={playerName}
                   onChange={(e) => setPlayerName(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-[#ceb08f] bg-[#f7efe3] px-3 py-2"
+                  placeholder="Enter your name"
+                  className="input-elegant w-full"
                 />
               </div>
-              {mode === 'offline' && offlineMode === 'local' ? (
-                <div>
-                  <label className="text-xs uppercase tracking-[0.14em] text-[#78563a]">Second player</label>
-                  <input
-                    value={opponentName}
-                    onChange={(e) => setOpponentName(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-[#ceb08f] bg-[#f7efe3] px-3 py-2"
-                  />
+
+              {/* Offline Mode Options */}
+              {mode === 'offline' ? (
+                <>
+                  <div>
+                    <label className="mb-3 block text-sm font-semibold text-[#5c4028]">Opponent</label>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <button
+                        onClick={() => setOfflineMode('bot')}
+                        className={`touch-target flex min-h-14 items-center justify-center gap-2 rounded-2xl border-2 px-4 py-3.5 font-semibold transition-smooth ${
+                          offlineMode === 'bot'
+                            ? 'border-[#6f5035] bg-[#6f5035] text-white'
+                            : 'border-[#d2b89a] bg-white text-[#6f5035] hover:bg-[#f9f1e6]'
+                        }`}
+                      >
+                        <Bot size={20} />
+                        vs Bot
+                      </button>
+                      <button
+                        onClick={() => setOfflineMode('local')}
+                        className={`touch-target flex min-h-14 items-center justify-center gap-2 rounded-2xl border-2 px-4 py-3.5 font-semibold transition-smooth ${
+                          offlineMode === 'local'
+                            ? 'border-[#6f5035] bg-[#6f5035] text-white'
+                            : 'border-[#d2b89a] bg-white text-[#6f5035] hover:bg-[#f9f1e6]'
+                        }`}
+                      >
+                        <UserRound size={20} />
+                        vs Friend
+                      </button>
+                    </div>
+                  </div>
+
+                  {offlineMode === 'local' && (
+                    <div>
+                      <label className="mb-2 block text-sm font-semibold text-[#5c4028]">Opponent Name</label>
+                      <input
+                        type="text"
+                        value={opponentName}
+                        onChange={(e) => setOpponentName(e.target.value)}
+                        placeholder="Opponent name"
+                        className="input-elegant w-full"
+                      />
+                    </div>
+                  )}
+                </>
+              ) : null}
+
+              {/* Online Mode Options */}
+              {mode === 'online' ? (
+                <>
+                  <div>
+                    <label className="mb-3 block text-sm font-semibold text-[#5c4028]">Match Type</label>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <button
+                        onClick={() => setOnlineFlow('auto')}
+                        className={`touch-target flex min-h-14 items-center justify-center gap-2 rounded-2xl border-2 px-4 py-3.5 font-semibold transition-smooth ${
+                          onlineFlow === 'auto'
+                            ? 'border-[#6f5035] bg-[#6f5035] text-white'
+                            : 'border-[#d2b89a] bg-white text-[#6f5035] hover:bg-[#f9f1e6]'
+                        }`}
+                      >
+                        <Users size={20} />
+                        Auto Match
+                      </button>
+                      <button
+                        onClick={() => setOnlineFlow('direct')}
+                        className={`touch-target flex min-h-14 items-center justify-center gap-2 rounded-2xl border-2 px-4 py-3.5 font-semibold transition-smooth ${
+                          onlineFlow === 'direct'
+                            ? 'border-[#6f5035] bg-[#6f5035] text-white'
+                            : 'border-[#d2b89a] bg-white text-[#6f5035] hover:bg-[#f9f1e6]'
+                        }`}
+                      >
+                        <Sword size={20} />
+                        Challenge
+                      </button>
+                    </div>
+                  </div>
+
+                  {onlineFlow === 'direct' && (
+                    <div>
+                      <label className="mb-2 block text-sm font-semibold text-[#5c4028]">Challenge Username</label>
+                      <input
+                        type="text"
+                        value={targetUsername}
+                        onChange={(e) => setTargetUsername(e.target.value)}
+                        placeholder="Enter opponent username"
+                        className="input-elegant w-full"
+                      />
+                    </div>
+                  )}
+                </>
+              ) : null}
+
+              {/* Advanced Settings */}
+              <div>
+                <button
+                  onClick={() => setAdvanced(!advanced)}
+                  className="touch-target inline-flex items-center gap-2 rounded-xl border border-[#d2b89a] bg-white px-4 py-2.5 text-sm font-semibold text-[#6f5035] hover:bg-[#f9f1e6] press-scale"
+                >
+                  <Settings2 size={18} />
+                  {advanced ? 'Hide' : 'Show'} Advanced Settings
+                </button>
+              </div>
+
+              {advanced ? (
+                <div className="animate-fade-in space-y-4 rounded-2xl border border-[#d2b89a] bg-[#f9f1e6] p-4">
+                  <div>
+                    <label className="mb-2 block text-sm font-semibold text-[#5c4028]">
+                      Board Size: {boardSize}x{boardSize}
+                    </label>
+                    <input
+                      type="range"
+                      min="3"
+                      max="6"
+                      value={boardSize}
+                      onChange={(e) => {
+                        const size = Number(e.target.value)
+                        setBoardSize(size)
+                        if (winLength > size) setWinLength(size)
+                      }}
+                      className="w-full accent-[#6f5035]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-semibold text-[#5c4028]">
+                      Win Length: {winLength}
+                    </label>
+                    <input
+                      type="range"
+                      min="3"
+                      max={boardSize}
+                      value={winLength}
+                      onChange={(e) => setWinLength(Number(e.target.value))}
+                      className="w-full accent-[#6f5035]"
+                    />
+                  </div>
                 </div>
               ) : null}
+
+              {/* Start Button */}
+              <button
+                onClick={startMatch}
+                disabled={loading}
+                className="btn-primary touch-target mt-4 flex w-full items-center justify-center gap-2 rounded-2xl px-6 py-4 text-lg font-semibold disabled:opacity-50 press-scale"
+              >
+                {loading ? (
+                  <>
+                    <span className="animate-spin-slow">
+                      <RotateCcw size={20} />
+                    </span>
+                    Starting...
+                  </>
+                ) : (
+                  <>
+                    <Play size={20} />
+                    Start Game
+                  </>
+                )}
+              </button>
             </div>
-
-            {mode === 'offline' ? (
-              <div className="mt-4">
-                <label className="text-xs uppercase tracking-[0.14em] text-[#78563a]">Offline type</label>
-                <div className="mt-1 flex gap-2">
-                  <button
-                    onClick={() => setOfflineMode('bot')}
-                    className={`inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-sm ${offlineMode === 'bot' ? 'bg-[#7f5e3d] text-[#fff4e7]' : 'bg-[#efdfca]'}`}
-                  >
-                    <Bot size={14} />
-                    Bot
-                  </button>
-                  <button
-                    onClick={() => setOfflineMode('local')}
-                    className={`inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-sm ${offlineMode === 'local' ? 'bg-[#7f5e3d] text-[#fff4e7]' : 'bg-[#efdfca]'}`}
-                  >
-                    <UserRound size={14} />
-                    Local 2P
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-4 rounded-2xl border border-[#ceb08f] bg-[#f7efdf] p-3">
-                <label className="text-xs uppercase tracking-[0.14em] text-[#78563a]">Online match style</label>
-                <div className="mt-2 flex gap-2">
-                  <button
-                    onClick={() => setOnlineFlow('auto')}
-                    className={`rounded-full border px-3 py-1.5 text-sm ${onlineFlow === 'auto' ? 'bg-[#7f5e3d] text-[#fff4e7]' : 'bg-[#efdfca]'}`}
-                  >
-                    Auto match
-                  </button>
-                  <button
-                    onClick={() => setOnlineFlow('direct')}
-                    className={`rounded-full border px-3 py-1.5 text-sm ${onlineFlow === 'direct' ? 'bg-[#7f5e3d] text-[#fff4e7]' : 'bg-[#efdfca]'}`}
-                  >
-                    Direct username
-                  </button>
-                </div>
-                {onlineFlow === 'direct' ? (
-                  <input
-                    value={targetUsername}
-                    onChange={(e) => setTargetUsername(e.target.value)}
-                    placeholder="Opponent username"
-                    className="mt-2 w-full rounded-xl border border-[#ceb08f] bg-white px-3 py-2"
-                  />
-                ) : null}
-                {onlineFlow === 'auto' ? (
-                  <p className="mt-2 text-xs text-[#7a5a3f]">Tip: each player must use a different username to be matched.</p>
-                ) : null}
-              </div>
-            )}
-
-            <button
-              onClick={() => setAdvanced((v) => !v)}
-              className="mt-4 inline-flex items-center gap-1 rounded-full border border-[#b89c78] bg-[#ecd8bf] px-3 py-1 text-sm"
-            >
-              <Settings2 size={14} />
-              {advanced ? 'Hide advanced' : 'Advanced'}
-            </button>
-
-            {advanced ? (
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="text-xs uppercase tracking-[0.14em] text-[#78563a]">Board size</label>
-                  <select
-                    value={boardSize}
-                    onChange={(e) => {
-                      const size = Number(e.target.value)
-                      setBoardSize(size)
-                      setWinLength(Math.min(size, winLength))
-                    }}
-                    className="mt-1 w-full rounded-xl border border-[#ceb08f] bg-[#f7efe3] px-3 py-2"
-                  >
-                    <option value={3}>3x3</option>
-                    <option value={4}>4x4</option>
-                    <option value={5}>5x5</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs uppercase tracking-[0.14em] text-[#78563a]">Win length</label>
-                  <select
-                    value={winLength}
-                    onChange={(e) => setWinLength(Number(e.target.value))}
-                    className="mt-1 w-full rounded-xl border border-[#ceb08f] bg-[#f7efe3] px-3 py-2"
-                  >
-                    {[3, 4, 5].filter((v) => v <= boardSize).map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            ) : null}
-
-            <button
-              disabled={loading}
-              onClick={() => void startMatch()}
-              className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[#6d4c2e] px-5 py-2.5 text-sm font-semibold text-[#fff4e7] disabled:opacity-60"
-            >
-              <Play size={16} />
-              {loading ? 'Please wait...' : mode === 'online' ? 'Start online' : 'Start offline'}
-            </button>
           </section>
         ) : null}
 
-        {screen === 'play' ? (
-          <section className="rounded-3xl border border-[#ccb18f] bg-[#f2e6d7]/90 p-4 shadow-md sm:p-6">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-sm text-[#6c5037]">
-                <Sword size={16} />
-                <span>{status}</span>
-              </div>
+        {/* Play Screen */}
+        {screen === 'play' && match ? (
+          <section className="card-elegant w-full max-w-3xl p-4 screen-enter sm:p-6">
+            {/* Header */}
+            <div className="mb-6 grid grid-cols-[auto_1fr_auto] items-center gap-3">
               <button
                 onClick={leaveMatch}
-                className="inline-flex items-center gap-1 rounded-full border border-[#b89c78] bg-[#ecd8bf] px-3 py-1 text-sm"
+                className="touch-target inline-flex items-center gap-2 rounded-xl border border-[#d2b89a] bg-white px-3 py-2 text-sm font-semibold text-[#6f5035] hover:bg-[#f9f1e6] press-scale sm:px-4 sm:py-2.5"
               >
-                <X size={14} />
-                Exit
+                <Home size={18} />
+                <span className="hidden sm:inline">Exit</span>
+              </button>
+
+              <div className="text-center">
+                <p className="text-sm font-medium text-[#8b6b4a]">{status}</p>
+                {match.winner ? (
+                  <p className="mt-1 text-sm font-bold text-[#6f5035]">
+                    {match.winner === 'draw' ? 'Draw' : `${match.winner} wins`}
+                  </p>
+                ) : null}
+              </div>
+
+              <button
+                onClick={resetGame}
+                className="touch-target inline-flex items-center gap-2 rounded-xl border border-[#d2b89a] bg-white px-3 py-2 text-sm font-semibold text-[#6f5035] hover:bg-[#f9f1e6] press-scale sm:px-4 sm:py-2.5"
+              >
+                <RotateCcw size={18} />
+                <span className="hidden sm:inline">Restart</span>
               </button>
             </div>
 
-            {match ? (
+            {/* Player Info */}
+            <div className="mx-auto mb-6 grid max-w-xl grid-cols-3 items-center rounded-2xl bg-gradient-to-r from-[#f2e3ce] to-[#e8d5b5] px-4 py-3 text-center">
+              <div className="flex items-center gap-2">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#6f5035] text-white font-bold">
+                  X
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-[#77563b]">Player X</p>
+                  <p className="text-sm font-semibold text-[#5c4028] truncate max-w-[100px] sm:max-w-[150px]">
+                    {match.player_x === 'bot' ? 'Bot' : match.player_x}
+                  </p>
+                </div>
+              </div>
+
+              <div className="text-center">
+                <p className="text-xs text-[#8b6b4a]">Turn</p>
+                <p className="text-2xl font-bold text-[#6f5035]">{match.current}</p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 text-right">
+                <div>
+                  <p className="text-xs font-medium text-[#77563b]">Player O</p>
+                  <p className="text-sm font-semibold text-[#5c4028] truncate max-w-[100px] sm:max-w-[150px]">
+                    {match.player_o === 'bot' ? 'Bot' : match.player_o}
+                  </p>
+                </div>
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#8b6b4a] text-white font-bold">
+                  O
+                </div>
+              </div>
+            </div>
+
+            {/* Game Board */}
+            <div className="no-select mx-auto mb-4 flex justify-center touch-none">
               <div
-                className="mx-auto grid gap-2"
-                style={{ gridTemplateColumns: `repeat(${match.board_size}, minmax(0, 1fr))`, maxWidth: 560 }}
+                className="grid gap-2 sm:gap-3"
+                style={{
+                  gridTemplateColumns: `repeat(${match.board_size}, minmax(0, 1fr))`,
+                  width: '100%',
+                  maxWidth: match.board_size <= 4 ? '460px' : '560px',
+                }}
               >
                 {match.board.flatMap((row, r) =>
-                  row.map((cell, c) => (
-                    <button
-                      key={`${r}-${c}`}
-                      onClick={() => void playCell(r, c)}
-                      className="aspect-square rounded-2xl border border-[#bfa182] bg-[#f8f0e5] text-4xl font-bold text-[#4f3522] hover:bg-[#f4e9db]"
-                    >
-                      {cell || ''}
-                    </button>
-                  )),
+                  row.map((cell, c) => {
+                    const isWinning = winningLine.some(([wr, wc]) => wr === r && wc === c)
+                    const isLast = lastMove && lastMove[0] === r && lastMove[1] === c
+                    const disabled = isCellDisabled(r, c)
+
+                    return (
+                      <button
+                        key={`${r}-${c}`}
+                        onClick={() => playCell(r, c)}
+                        disabled={disabled}
+                        className={`aspect-square touch-target flex items-center justify-center rounded-xl sm:rounded-2xl border-2 font-bold transition-smooth press-scale
+                          ${isWinning 
+                            ? 'winning-cell border-[#ffd700] text-3xl sm:text-5xl' 
+                            : isLast
+                            ? 'border-[#6f5035] bg-[#f0e4d4] text-3xl sm:text-5xl'
+                            : 'border-[#d2b89a] bg-[#f8f0e5] text-3xl sm:text-5xl hover:bg-[#f4e9db]'
+                          }
+                          ${!disabled && !cell ? 'cursor-pointer hover:shadow-md' : ''}
+                          ${disabled && !cell ? 'cursor-default opacity-60' : ''}
+                        `}
+                      >
+                        {cell === 'X' && (
+                          <span className="cell-x animate-pop-in text-[#6f5035]">X</span>
+                        )}
+                        {cell === 'O' && (
+                          <span className="cell-o animate-pop-in text-[#8b6b4a]">O</span>
+                        )}
+                      </button>
+                    )
+                  }),
                 )}
               </div>
-            ) : null}
+            </div>
+
+            {/* Mobile action buttons */}
+            <div className="flex gap-3 sm:hidden">
+              <button
+                onClick={resetGame}
+                className="btn-secondary touch-target flex-1 rounded-xl px-4 py-3 text-sm font-semibold press-scale"
+              >
+                <RotateCcw size={16} className="inline" /> Restart
+              </button>
+              <button
+                onClick={() => setChatOpen(!chatOpen)}
+                className="btn-primary touch-target flex-1 rounded-xl px-4 py-3 text-sm font-semibold press-scale"
+              >
+                <MessageCircle size={16} className="inline" /> {chatOpen ? 'Close' : 'Chat'}
+              </button>
+            </div>
           </section>
         ) : null}
       </div>
 
-      {screen === 'play' && mode === 'online' ? (
-        <div className="fixed bottom-4 right-4 z-20">
-          <button
-            onClick={() => setChatOpen((v) => !v)}
-            className="inline-flex items-center gap-2 rounded-full border border-[#6f5035] bg-[#6f5035] px-4 py-2 text-sm font-semibold text-[#fff4e7] shadow-lg"
-          >
-            <MessageCircle size={16} />
-            {chatOpen ? 'Close' : 'Chat'}
-          </button>
+      {/* Chat Panel */}
+      {screen === 'play' && mode === 'online' && chatOpen ? (
+        <div className="fixed bottom-4 right-4 z-20 w-[calc(100vw-2rem)] max-w-sm animate-fade-in sm:right-6">
+          <div className="card-elegant p-3 shadow-xl">
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-[#6f5035]">Match Chat</h3>
+              <button
+                onClick={() => setChatOpen(false)}
+                className="touch-target rounded-lg p-1 text-[#6f5035] hover:bg-[#f0e4d4] press-scale"
+              >
+                <X size={16} />
+              </button>
+            </div>
 
-          {chatOpen ? (
-            <div className="mt-2 w-[300px] rounded-2xl border border-[#ccb18f] bg-[#f3e7d7] p-3 shadow-xl">
-              <div className="mb-2 flex gap-1">
-                {['😀', '🔥', '🎯', '👏', '😅'].map((emoji) => (
-                  <button key={emoji} onClick={() => void sendChat(emoji)} className="rounded-md border bg-[#efdcc5] px-2 py-1">
-                    {emoji}
-                  </button>
-                ))}
-              </div>
-
-              <div className="max-h-52 space-y-1 overflow-auto rounded-lg border border-[#d2b89a] bg-[#f9f1e6] p-2 text-sm">
-                {chat.length === 0 ? <p className="text-[#77563b]">No messages yet</p> : null}
-                {chat
+            <div className="mb-2 max-h-48 space-y-1.5 overflow-auto rounded-xl border border-[#d2b89a] bg-[#f9f1e6] p-2">
+              {chat.length === 0 ? (
+                <p className="text-center text-sm text-[#77563b]">No messages yet</p>
+              ) : (
+                chat
                   .slice()
                   .reverse()
                   .map((msg) => (
-                    <div key={msg.id} className="rounded-md bg-[#efe0cc] px-2 py-1">
+                    <div key={msg.id} className="animate-fade-in rounded-lg bg-[#efe0cc] px-2.5 py-1.5">
                       <p className="text-xs font-semibold text-[#5c4028]">{msg.user_id}</p>
-                      <p>
-                        {msg.emoji ? `${msg.emoji} ` : ''}
-                        {msg.message || ''}
-                      </p>
+                      <p className="text-sm">{msg.message || ''}</p>
                     </div>
-                  ))}
-              </div>
-
-              <div className="mt-2 flex gap-2">
-                <input
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  placeholder="Type message"
-                  className="flex-1 rounded-lg border border-[#ceb08f] bg-white px-2 py-1.5"
-                />
-                <button
-                  onClick={() => void sendChat()}
-                  className="inline-flex items-center gap-1 rounded-lg bg-[#6d4c2e] px-3 py-1.5 text-[#fff4e7]"
-                >
-                  <SendHorizontal size={14} />
-                  Send
-                </button>
-              </div>
+                  ))
+              )}
             </div>
-          ) : null}
+
+            <div className="flex gap-2">
+              <input
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && sendChat()}
+                placeholder="Type message..."
+                className="input-elegant flex-1 text-sm"
+              />
+              <button
+                onClick={() => sendChat()}
+                className="btn-primary touch-target inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm press-scale"
+              >
+                <SendHorizontal size={16} />
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
   )
+}
+
+// Confetti Component
+function findWinningLine(board: string[][], winLength: number, winner: string): [number, number][] {
+  const n = board.length
+  const dirs = [
+    [0, 1],
+    [1, 0],
+    [1, 1],
+    [1, -1],
+  ]
+  
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      const symbol = board[r][c]
+      if (symbol !== winner) continue
+      
+      for (const [dr, dc] of dirs) {
+        let matches = true
+        const line: [number, number][] = [[r, c]]
+        
+        for (let k = 1; k < winLength; k++) {
+          const nr = r + dr * k
+          const nc = c + dc * k
+          if (nr < 0 || nr >= n || nc < 0 || nc >= n || board[nr][nc] !== symbol) {
+            matches = false
+            break
+          }
+          line.push([nr, nc])
+        }
+        
+        if (matches) return line
+      }
+    }
+  }
+  
+  return []
 }
 
 async function fetchAPI(path: string, token: string, init: RequestInit) {
