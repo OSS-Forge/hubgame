@@ -4,6 +4,7 @@ import { ArrowLeft, Bot, MessageCircle, Play, SendHorizontal, Settings2, Sword, 
 type Mode = 'offline' | 'online'
 type OfflineMode = 'local' | 'bot'
 type OnlineFlow = 'auto' | 'direct'
+type BotDifficulty = 'easy' | 'medium' | 'hard'
 
 type MatchState = {
   id: string
@@ -39,6 +40,7 @@ export function App() {
   const [screen, setScreen] = useState<'choose' | 'setup' | 'play'>('choose')
   const [mode, setMode] = useState<Mode>('offline')
   const [offlineMode, setOfflineMode] = useState<OfflineMode>('bot')
+  const [botDifficulty, setBotDifficulty] = useState<BotDifficulty>('medium')
   const [onlineFlow, setOnlineFlow] = useState<OnlineFlow>('auto')
   const [advanced, setAdvanced] = useState(false)
 
@@ -147,7 +149,7 @@ export function App() {
         setMatch(localMatch)
         setScreen('play')
         setChat([])
-        setStatus('Your turn')
+        setStatus(offlineMode === 'bot' ? `Your turn against ${labelBotDifficulty(botDifficulty)} bot` : 'Your turn')
         setLastMove(null)
         setWinningLine([])
         return
@@ -241,7 +243,7 @@ export function App() {
 
         if (offlineMode === 'bot' && next.current === 'O') {
           await sleep(300)
-          const bot = findBotMove(next.board)
+          const bot = findBotMove(next.board, next.win_length, botDifficulty)
           if (bot) {
             next.board[bot.row][bot.col] = 'O'
             next.move_count += 1
@@ -514,6 +516,27 @@ export function App() {
                         placeholder="Opponent name"
                         className="input-elegant w-full"
                       />
+                    </div>
+                  )}
+
+                  {offlineMode === 'bot' && (
+                    <div>
+                      <label className="mb-3 block text-sm font-semibold text-[#5c4028]">Bot Difficulty</label>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        {(['easy', 'medium', 'hard'] as BotDifficulty[]).map((difficulty) => (
+                          <button
+                            key={difficulty}
+                            onClick={() => setBotDifficulty(difficulty)}
+                            className={`touch-target flex min-h-14 items-center justify-center rounded-2xl border-2 px-4 py-3.5 font-semibold capitalize transition-smooth ${
+                              botDifficulty === difficulty
+                                ? 'border-[#6f5035] bg-[#6f5035] text-white'
+                                : 'border-[#d2b89a] bg-white text-[#6f5035] hover:bg-[#f9f1e6]'
+                            }`}
+                          >
+                            {difficulty}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </>
@@ -931,15 +954,177 @@ function isBoardFull(board: string[][]) {
   return board.every((row) => row.every((cell) => cell !== ''))
 }
 
-function findBotMove(board: string[][]) {
-  const center = Math.floor(board.length / 2)
-  if (!board[center][center]) return { row: center, col: center }
+function findBotMove(board: string[][], winLength: number, difficulty: BotDifficulty) {
+  const moves = listOpenCells(board)
+  if (moves.length === 0) return null
+
+  if (difficulty === 'easy') {
+    return randomMove(moves)
+  }
+
+  const winningMove = findImmediateMove(board, winLength, 'O')
+  if (winningMove) return winningMove
+
+  if (difficulty === 'medium') {
+    const blockingMove = findImmediateMove(board, winLength, 'X')
+    if (blockingMove) return blockingMove
+    return preferredMove(board, moves)
+  }
+
+  const blockingMove = findImmediateMove(board, winLength, 'X')
+  if (blockingMove) return blockingMove
+
+  if (board.length === 3 && winLength === 3) {
+    return minimaxBestMove(board)
+  }
+
+  return strongestScoredMove(board, winLength, moves)
+}
+
+function listOpenCells(board: string[][]) {
+  const moves: Array<{ row: number; col: number }> = []
   for (let r = 0; r < board.length; r++) {
     for (let c = 0; c < board.length; c++) {
-      if (!board[r][c]) return { row: r, col: c }
+      if (!board[r][c]) moves.push({ row: r, col: c })
+    }
+  }
+  return moves
+}
+
+function randomMove(moves: Array<{ row: number; col: number }>) {
+  return moves[Math.floor(Math.random() * moves.length)] ?? null
+}
+
+function findImmediateMove(board: string[][], winLength: number, symbol: 'X' | 'O') {
+  const moves = listOpenCells(board)
+  for (const move of moves) {
+    const clone = cloneBoard(board)
+    clone[move.row][move.col] = symbol
+    if (checkWinner(clone, winLength) === symbol) {
+      return move
     }
   }
   return null
+}
+
+function preferredMove(board: string[][], moves: Array<{ row: number; col: number }>) {
+  const center = Math.floor(board.length / 2)
+  if (!board[center][center]) return { row: center, col: center }
+
+  const corners = moves.filter((move) => {
+    const last = board.length - 1
+    return (
+      (move.row === 0 && move.col === 0) ||
+      (move.row === 0 && move.col === last) ||
+      (move.row === last && move.col === 0) ||
+      (move.row === last && move.col === last)
+    )
+  })
+  if (corners.length > 0) return randomMove(corners)
+  return randomMove(moves)
+}
+
+function strongestScoredMove(board: string[][], winLength: number, moves: Array<{ row: number; col: number }>) {
+  let bestMove = moves[0]
+  let bestScore = Number.NEGATIVE_INFINITY
+
+  for (const move of moves) {
+    const attackScore = evaluateMove(board, winLength, move, 'O')
+    const defenseScore = evaluateMove(board, winLength, move, 'X')
+    const centerBias = centerWeight(board.length, move.row, move.col)
+    const score = attackScore * 2 + defenseScore * 1.5 + centerBias
+    if (score > bestScore) {
+      bestScore = score
+      bestMove = move
+    }
+  }
+
+  return bestMove
+}
+
+function evaluateMove(board: string[][], winLength: number, move: { row: number; col: number }, symbol: 'X' | 'O') {
+  const dirs = [
+    [0, 1],
+    [1, 0],
+    [1, 1],
+    [1, -1],
+  ]
+  let best = 0
+
+  for (const [dr, dc] of dirs) {
+    let count = 1
+
+    for (const direction of [-1, 1]) {
+      for (let step = 1; step < winLength; step++) {
+        const nr = move.row + dr * step * direction
+        const nc = move.col + dc * step * direction
+        if (nr < 0 || nr >= board.length || nc < 0 || nc >= board.length) break
+        if (board[nr][nc] !== symbol) break
+        count++
+      }
+    }
+
+    best = Math.max(best, count)
+  }
+
+  return best
+}
+
+function centerWeight(size: number, row: number, col: number) {
+  const center = (size - 1) / 2
+  return size - (Math.abs(center - row) + Math.abs(center - col))
+}
+
+function minimaxBestMove(board: string[][]) {
+  let bestScore = Number.NEGATIVE_INFINITY
+  let bestMove: { row: number; col: number } | null = null
+
+  for (const move of listOpenCells(board)) {
+    const clone = cloneBoard(board)
+    clone[move.row][move.col] = 'O'
+    const score = minimax(clone, false)
+    if (score > bestScore) {
+      bestScore = score
+      bestMove = move
+    }
+  }
+
+  return bestMove
+}
+
+function minimax(board: string[][], maximizing: boolean): number {
+  const winner = checkWinner(board, 3)
+  if (winner === 'O') return 10
+  if (winner === 'X') return -10
+  if (isBoardFull(board)) return 0
+
+  if (maximizing) {
+    let best = Number.NEGATIVE_INFINITY
+    for (const move of listOpenCells(board)) {
+      const clone = cloneBoard(board)
+      clone[move.row][move.col] = 'O'
+      best = Math.max(best, minimax(clone, false))
+    }
+    return best
+  }
+
+  let best = Number.POSITIVE_INFINITY
+  for (const move of listOpenCells(board)) {
+    const clone = cloneBoard(board)
+    clone[move.row][move.col] = 'X'
+    best = Math.min(best, minimax(clone, true))
+  }
+  return best
+}
+
+function cloneBoard(board: string[][]) {
+  return board.map((row) => [...row])
+}
+
+function labelBotDifficulty(difficulty: BotDifficulty) {
+  if (difficulty === 'easy') return 'easy'
+  if (difficulty === 'hard') return 'hard'
+  return 'medium'
 }
 
 function slugify(v: string) {
