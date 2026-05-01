@@ -43,6 +43,7 @@ async function main() {
 
     const manifestTarget = join(targetGameDir, 'manifest.json')
     await cp(manifestPath, manifestTarget)
+    await writeGameRouteIndex(targetGameDir, manifest.entry)
 
     const readmePath = join(sourceGameDir, 'README.md')
     if (existsSync(readmePath)) {
@@ -86,6 +87,31 @@ async function main() {
   )
 
   console.log(`Synced ${fallback.length} game(s) to web/public/games and web/public/fallback-catalog.json`)
+}
+
+async function writeGameRouteIndex(targetGameDir, entry) {
+  const safeEntry = entry
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/')
+  await writeFile(
+    join(targetGameDir, 'index.html'),
+    `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="refresh" content="0; url=${safeEntry}" />
+    <title>Opening game</title>
+    <script>window.location.replace(${JSON.stringify(safeEntry)})</script>
+  </head>
+  <body>
+    <a href="${safeEntry}">Open game</a>
+  </body>
+</html>
+`,
+    'utf8',
+  )
 }
 
 main().catch((err) => {
